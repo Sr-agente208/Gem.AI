@@ -1,0 +1,8 @@
+# Configuração do CLI do Supabase para este repositório.
+# Uso: supabase link --project-ref jikizafsbrclkfgoccha
+#      supabase db push
+#      supabase functions deploy gem-chat
+project_id = "jikizafsbrclkfgoccha"
+
+[functions.gem-chat]
+verify_jwt = false

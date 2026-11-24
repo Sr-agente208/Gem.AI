@@ -1,0 +1,17 @@
+# Segredos locais — nunca versionar
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Dependências / builds
+node_modules/
+dist/
+build/
+.DS_Store
+*.log
+
+# CLI do Supabase (estado local)
+supabase/.temp/
+supabase/.branches/

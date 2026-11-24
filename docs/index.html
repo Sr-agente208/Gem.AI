@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0d14" />
+    <meta
+      name="description"
+      content="Gem.AI — chat com IA rápida via Groq e histórico salvo no Supabase."
+    />
+    <title>Gem.AI · Chat com IA</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%236d5efc'/%3E%3Cpath d='M32 12l5 13 13 5-13 5-5 13-5-13-13-5 13-5z' fill='white'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="sidebarOverlay" class="sidebar-overlay"></div>
+
+    <aside id="sidebar" class="sidebar" aria-label="Histórico de conversas">
+      <div class="sidebar-head">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">✦</span>
+          <span class="brand-name">Gem<span>.AI</span></span>
+        </div>
+        <button id="sidebarClose" class="icon-btn only-mobile" type="button" aria-label="Fechar menu">✕</button>
+      </div>
+
+      <button id="newChatBtn" class="new-chat-btn" type="button">
+        <span class="plus" aria-hidden="true">＋</span> Novo chat
+        <span class="shortcut">⌘ K</span>
+      </button>
+
+      <div class="sidebar-label">Conversas</div>
+      <div id="conversationList" class="conversation-list" role="list"></div>
+
+      <div class="sidebar-foot">
+        <div class="status-row">
+          <span id="statusDot" class="status-dot"></span>
+          <span id="statusText">Conectando…</span>
+        </div>
+        <button id="settingsBtn" class="foot-btn" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.94 19.3a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.57 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.7 8.94a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.57a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.06 4.7a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.43 9c.16.62.72 1.05 1.36 1.06H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg>
+          Configurações
+        </button>
+        <p class="foot-note">Histórico salvo no Supabase · IA via Groq</p>
+      </div>
+    </aside>
+
+    <main class="chat">
+      <header class="chat-header">
+        <button id="sidebarToggle" class="icon-btn only-mobile" type="button" aria-label="Abrir menu">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+        <div class="chat-heading">
+          <h1 id="chatTitle">Novo chat</h1>
+          <p id="chatSubtitle">Comece uma conversa</p>
+        </div>
+        <div class="header-actions">
+          <span id="modelPill" class="model-pill" title="Modelo usado nesta conversa">—</span>
+          <button id="clearChatBtn" class="icon-btn" type="button" title="Limpar mensagens da tela" aria-label="Limpar mensagens da tela">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div id="messagesWrap" class="messages-wrap">
+        <div id="messages" class="messages" aria-live="polite"></div>
+
+        <section id="emptyState" class="empty-state">
+          <div class="empty-mark" aria-hidden="true">✦</div>
+          <h2>Como posso ajudar?</h2>
+          <p>Converse com modelos rápidos da Groq. Suas mensagens ficam salvas no Supabase.</p>
+          <div class="suggestions">
+            <button type="button" data-prompt="Explique o que é uma Edge Function do Supabase em termos simples.">O que é uma Edge Function?</button>
+            <button type="button" data-prompt="Me ajude a escrever um e-mail curto e cordial remarcando uma reunião.">Escrever um e-mail</button>
+            <button type="button" data-prompt="Crie um plano de estudos de 7 dias para aprender JavaScript do zero.">Plano de estudos</button>
+            <button type="button" data-prompt="Explique a diferença entre SQL e NoSQL com um exemplo prático.">SQL vs NoSQL</button>
+          </div>
+        </section>
+      </div>
+
+      <div class="composer-wrap">
+        <form id="composerForm" class="composer" autocomplete="off">
+          <textarea
+            id="promptInput"
+            rows="1"
+            placeholder="Pergunte qualquer coisa…"
+            aria-label="Mensagem"
+          ></textarea>
+          <button id="sendBtn" class="send-btn" type="submit" title="Enviar" aria-label="Enviar mensagem">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l16-8-6 16-3-6-7-2Z"/></svg>
+          </button>
+          <button id="stopBtn" class="stop-btn" type="button" title="Parar geração" aria-label="Parar geração" hidden>
+            <span></span>
+          </button>
+        </form>
+        <p class="composer-hint">Enter envia · Shift + Enter quebra linha · as respostas chegam em tempo real</p>
+      </div>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <div id="settingsModal" class="modal-backdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="modal-head">
+          <div>
+            <h2 id="settingsTitle">Configurações</h2>
+            <p>Ajustes ficam salvos neste navegador.</p>
+          </div>
+          <button id="settingsClose" class="icon-btn" type="button" aria-label="Fechar">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <label class="field">
+            <span>Modelo</span>
+            <div class="field-row">
+              <select id="modelSelect"></select>
+              <button id="refreshModelsBtn" class="ghost-btn" type="button" title="Buscar modelos da sua conta Groq">Atualizar</button>
+            </div>
+          </label>
+
+          <label class="field">
+            <span>Instruções do assistente (system prompt)</span>
+            <textarea id="systemPromptInput" rows="3"></textarea>
+          </label>
+
+          <div class="field-grid">
+            <label class="field">
+              <span>Criatividade <b id="temperatureValue">0,7</b></span>
+              <input id="temperatureInput" type="range" min="0" max="2" step="0.1" />
+            </label>
+            <label class="field">
+              <span>Máx. de tokens</span>
+              <input id="maxTokensInput" type="number" min="128" max="8192" step="128" />
+            </label>
+          </div>
+
+          <details class="advanced">
+            <summary>Avançado · conexão e segurança</summary>
+            <label class="field">
+              <span>URL do projeto Supabase</span>
+              <input id="supabaseUrlInput" type="url" spellcheck="false" />
+            </label>
+            <label class="field">
+              <span>Publishable key (pública)</span>
+              <input id="publishableKeyInput" type="text" spellcheck="false" />
+            </label>
+            <label class="field">
+              <span>Nome da Edge Function</span>
+              <input id="functionNameInput" type="text" spellcheck="false" />
+            </label>
+            <label class="field">
+              <span>Token opcional da função (GEM_CHAT_TOKEN)</span>
+              <input id="chatTokenInput" type="password" placeholder="deixe em branco se não usar" autocomplete="off" />
+            </label>
+            <button id="resetOwnerBtn" class="ghost-btn danger" type="button">Criar nova identidade local</button>
+            <p class="help-text">A chave da Groq não fica aqui: configure <code>GROQ_API_KEY</code> como segredo no Supabase.</p>
+          </details>
+
+          <div id="connectionResult" class="connection-result" hidden></div>
+        </div>
+
+        <div class="modal-foot">
+          <button id="testConnectionBtn" class="ghost-btn" type="button">Testar conexão</button>
+          <button id="saveSettingsBtn" class="primary-btn" type="button">Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>
