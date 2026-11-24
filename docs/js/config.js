@@ -5,6 +5,12 @@ export const CONFIG = {
   supabaseUrl: "https://jikizafsbrclkfgoccha.supabase.co",
   supabasePublishableKey: "sb_publishable_Cq2BWkiQP5fLu6z9J-403g_REk8WCPd",
   functionName: "gem-chat",
+  // Token compartilhado enviado no header x-gem-token (confere com o secret
+  // GEM_CHAT_TOKEN no Supabase). Como este arquivo é público no GitHub Pages,
+  // ele é só uma barreira contra uso casual da URL — NÃO é autenticação.
+  // Para proteção de verdade: apague este valor, gere OUTRO token só no
+  // Supabase e preencha-o em Configurações → Avançado em cada navegador.
+  chatToken: "9859b84636b29d449c0d6ba79db668bd71f4587c0fcb0e6f",
   defaultModel: "qwen/qwen3.8-27b",
   defaultSystemPrompt:
     "Você é o Gem.AI, um assistente útil, direto e cordial. Responda em português do Brasil, salvo pedido contrário.",

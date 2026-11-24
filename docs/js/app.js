@@ -416,7 +416,7 @@ function openSettings() {
   ui.temperatureInput.value = settings.temperature ?? 0.7;
   ui.temperatureValue.textContent = Number(ui.temperatureInput.value).toFixed(1).replace(".", ",");
   ui.maxTokensInput.value = settings.maxTokens ?? 2048;
-  ui.chatTokenInput.value = settings.chatToken ?? "";
+  ui.chatTokenInput.value = settings.chatToken || getConfig().chatToken || "";
   ui.supabaseUrlInput.value = config.supabaseUrl;
   ui.publishableKeyInput.value = config.supabasePublishableKey;
   ui.functionNameInput.value = config.functionName;

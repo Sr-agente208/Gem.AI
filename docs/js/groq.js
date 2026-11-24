@@ -9,7 +9,8 @@ function authHeaders() {
     apikey: cfg.supabasePublishableKey,
     "x-gem-owner": localStorage.getItem("gem.owner") || "",
   };
-  const token = (getSettings().chatToken || "").trim();
+  // Preferência: token digitado nas Configurações; senão, o padrão do config.js.
+  const token = (getSettings().chatToken || getConfig().chatToken || "").trim();
   if (token) headers["x-gem-token"] = token;
   return headers;
 }

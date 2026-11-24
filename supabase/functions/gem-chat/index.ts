@@ -9,7 +9,8 @@
 // GET ?test=1     -> health check: gera uma resposta minúscula e confirma a chave
 // POST            -> chat completion com streaming (SSE)
 //
-// Opcional: defina GEM_CHAT_TOKEN para exigir o header x-gem-token nas chamadas.
+// Opcional: defina GEM_CHAT_TOKEN para exigir o header x-gem-token no POST
+// (o endpoint que consome cota). Os GETs de diagnóstico continuam abertos.
 
 const GROQ_URL = "https://api.groq.com/openai/v1";
 
@@ -49,11 +50,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return new Response(null, { status: 204, headers: CORS });
   }
 
-  const requiredToken = Deno.env.get("GEM_CHAT_TOKEN");
-  if (requiredToken && req.headers.get("x-gem-token") !== requiredToken) {
-    return json({ error: "Token de acesso inválido.", code: "invalid_token" }, 401);
-  }
-
   const groqKey = Deno.env.get("GROQ_API_KEY");
   if (!groqKey) {
     return json(
@@ -82,7 +78,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
           body: JSON.stringify({
             model,
             messages: [{ role: "user", content: "Responda exatamente: OK" }],
-            max_completion_tokens: 512,
+            max_completion_tokens: 64,
             temperature: 0,
             stream: false,
           }),
@@ -139,6 +135,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   if (req.method !== "POST") {
     return json({ error: "Método não suportado. Use GET, POST ou OPTIONS." }, 405);
+  }
+
+  // Só o POST consome cota de verdade; GETs de diagnóstico ficam públicos.
+  const requiredToken = Deno.env.get("GEM_CHAT_TOKEN");
+  if (requiredToken && req.headers.get("x-gem-token") !== requiredToken) {
+    return json({ error: "Token de acesso inválido.", code: "invalid_token" }, 401);
   }
 
   let payload: Record<string, unknown>;

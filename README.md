@@ -42,11 +42,12 @@ As políticas de RLS só deixam ver/inserir/apagar linhas com aquele `owner_key`
 | --- | --- |
 | Projeto Supabase | `escola-de-jegues` · ref `jikizafsbrclkfgoccha` · região `ca-central-1` |
 | Migration `gem_ai_init` | ✅ aplicada (`gem_conversations`, `gem_messages`, 7 políticas RLS, trigger) |
-| Edge Function `gem-chat` | ✅ ativa, **v4**, `verify_jwt = false` |
+| Edge Function `gem-chat` | ✅ ativa, **v6**, `verify_jwt = false` |
 | `GROQ_API_KEY` | ✅ gravada como **secret** no Supabase (não está em nenhum arquivo) |
+| `GEM_CHAT_TOKEN` | ✅ secret no Supabase + valor padrão no `config.js`; exigido no POST |
 | Teste do banco | ✅ insert de conversa + mensagem; RLS isolou (1 linha para o dono, 0 para outro) |
-| Teste da Groq | ✅ `GET ?test=1` gerou uma resposta real: `{"ok":true,"model":"qwen/qwen3.8-27b","reply":"OK"}` |
-| **GitHub Pages** | ⏳ **falta habilitar no painel do GitHub** (passo 2) |
+| Teste da Groq | ✅ `GET ?test=1` gerou resposta real: `{"ok":true,"model":"qwen/qwen3.8-27b","reply":"OK"}` |
+| **GitHub Pages** | ✅ **no ar** em <https://sr-agente208.github.io/Gem.AI/> · `status: built`, branch `/docs` |
 
 Modelos de chat disponíveis na conta e habilitados no app (verificados em 2026-11-24):
 `qwen/qwen3.8-27b` **(padrão)**, `openai/gpt-oss-120b`, `openai/gpt-oss-20b`.
@@ -55,8 +56,8 @@ foram **descontinuados** pela Groq e retornam erro — por isso foram removidos 
 
 > Tentei criar um projeto Supabase novo, mas sua conta já atingiu o limite de **2 projetos free ativos**.
 > Por isso as tabelas foram criadas no projeto existente, todas com prefixo `gem_` para não colidir
-> com `alunos`, `turmas`, `notas` etc. Também tentei habilitar o Pages pela API, mas o token desta
-> integração não tem permissão (`403 Resource not accessible by integration`) — é um passo manual de 30 s.
+> com `alunos`, `turmas`, `notas` etc. O Pages foi habilitado manualmente no painel do GitHub
+> (o token desta integração não tem permissão para a API de Pages) e o repositório hoje é público.
 
 ---
 
@@ -75,11 +76,28 @@ supabase secrets set GROQ_API_KEY=gsk_nova_chave
 Ou pelo painel: **Project Settings → Edge Functions → Secrets → GROQ_API_KEY**.
 Não é preciso republicar a função depois de trocar um secret.
 
-Opcional (recomendado se o site for público): defina também `GEM_CHAT_TOKEN` e coloque o mesmo
-valor em **Configurações → Avançado → Token opcional da função**. A função passa a exigir o header
-`x-gem-token`, reduzindo o risco de terceiros usarem sua cota da Groq.
+## Token de acesso (`GEM_CHAT_TOKEN`) — ✅ já configurado
 
-### Endpoints de diagnóstico da função
+O POST da função (o único que consome cota de verdade) exige o header `x-gem-token`.
+O valor foi gerado, gravado como **secret** no Supabase e colocado como padrão em
+`CONFIG.chatToken` (`docs/js/config.js`), então o chat funciona sem configuração extra.
+Você pode sobrescrevê-lo em **Configurações → Avançado → Token opcional da função**.
+
+```bash
+# gerar/rotacionar
+supabase secrets set GEM_CHAT_TOKEN=$(openssl rand -hex 24)
+# e atualize CONFIG.chatToken em docs/js/config.js com o MESMO valor
+```
+
+> ⚠️ **Limite honesto:** como o site é público, esse token também é público (está no JS).
+> Ele impede uso casual da URL por quem não abriu o app, **mas não é autenticação**.
+> Para proteção real: gere um valor novo, configure-o **apenas** como secret, remova
+> `CONFIG.chatToken` do `config.js` e preencha o campo em Configurações em cada navegador —
+> ou migre para **Supabase Auth** + `verify_jwt = true`.
+
+Os GETs de diagnóstico continuam abertos (não consomem cota relevante: o health check usa 64 tokens).
+
+## Endpoints de diagnóstico da função
 
 | Chamada | Retorno |
 | --- | --- |
@@ -91,28 +109,30 @@ O botão **Testar conexão** usa os dois GETs: lista os modelos habilitados e fa
 
 ---
 
-## Passo 2 · Publicar no GitHub Pages
+## Passo 2 · GitHub Pages — ✅ já publicado
 
-O site está em `docs/` e usa apenas caminhos relativos, então funciona tanto na raiz quanto em
-`https://<usuario>.github.io/<repo>/`.
+**Site ao vivo:** <https://sr-agente208.github.io/Gem.AI/>
 
-1. Faça push desta branch (necessário para o Pages enxergá-la):
+Configuração atual (confirmada pela API do GitHub):
 
-   ```bash
-   git push origin arena/e947b2eb-gem-ai
-   ```
+```json
+{
+  "status": "built",
+  "build_type": "legacy",
+  "source": { "branch": "arena/e947b2eb-gem-ai", "path": "/docs" },
+  "html_url": "https://sr-agente208.github.io/Gem.AI/",
+  "https_enforced": true,
+  "public": true
+}
+```
 
-2. No GitHub: **Settings → Pages → Build and deployment → Deploy from a branch**
-   - **Branch:** `arena/e947b2eb-gem-ai`
-   - **Folder:** `/docs`
-   - **Save**
+O repositório é **público** (necessário para Pages em plano Free) e os builds do Pages já
+rodaram com sucesso nesta branch. Não há GitHub Actions nem comando de build: cada
+`git push origin arena/e947b2eb-gem-ai` publica `docs/` automaticamente em ~30 s.
+O site usa só caminhos relativos, então funciona no subpath `/Gem.AI/`.
 
-3. URL esperada: <https://sr-agente208.github.io/Gem.AI/>
-
-> ⚠️ **Atenção:** este repositório está **privado**. Em contas GitHub **Free**, o Pages só publica
-> repositórios públicos (Pages em repo privado exige Pro/Team/Enterprise). Se o seu plano for Free,
-> torne o repositório público em *Settings → General → Danger Zone → Change visibility*, ou publique
-> a mesma pasta `docs/` no Cloudflare Pages / Netlify (funciona com repo privado, sem build).
+> Não adicionei um workflow do Actions justamente para não trocar a origem do deploy:
+> `build_type: legacy` (branch + `/docs`) já está funcionando.
 
 Não é necessário GitHub Actions nem `npm install`: não há nada para compilar.
 O arquivo `docs/.nojekyll` evita que o Jekyll do Pages ignore arquivos.
@@ -168,9 +188,10 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
   histórico; ninguém vê o de outro UUID, mas também não há login, recuperação entre dispositivos
   ou proteção contra alguém que roube esse UUID. Para produção, troque por **Supabase Auth**
   (`auth.uid()` nas políticas) e `verify_jwt = true` na função.
-- ⚠️ Com `verify_jwt = false`, qualquer pessoa com a URL da função pode consumir sua cota da Groq.
-  Use `GEM_CHAT_TOKEN`, restrinja CORS em `supabase/functions/gem-chat/index.ts` e/ou adicione
-  rate limiting antes de divulgar o link.
+- ⚠️ Com `verify_jwt = false`, o POST da função exige `GEM_CHAT_TOKEN` (secret no Supabase).
+  Como o valor padrão está no `config.js` de um site público, isso é **ofuscação, não autenticação**:
+  qualquer pessoa pode lê-lo no código. Para produção, use **Supabase Auth** + `verify_jwt = true`,
+  mantenha o token apenas no secret/localStorage, restrinja o CORS e adicione rate limiting.
 - ✅ Todo Markdown renderizado passa por escape de HTML antes de qualquer substituição (sem XSS).
 
 ---
@@ -187,7 +208,7 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 │   ├── index.html
 │   ├── styles.css
 │   └── js/
-│       ├── config.js            # URL + publishable key + modelos + settings locais
+│       ├── config.js            # URL + publishable key + token + modelos + settings locais
 │       ├── db.js                # cliente PostgREST (conversas e mensagens)
 │       ├── groq.js              # cliente SSE da Edge Function
 │       ├── markdown.js          # renderizador Markdown seguro
@@ -205,6 +226,7 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 | Adicionar/trocar modelos | `ALLOWED_MODELS` em `supabase/functions/gem-chat/index.ts` **e** `CONFIG.models` em `docs/js/config.js` |
 | Mudar o comportamento padrão | `DEFAULT_SYSTEM` na função e `defaultSystemPrompt` no `config.js` |
 | Mudar cores/layout | `docs/styles.css` (variáveis no `:root`) |
+| Trocar o token de acesso | `supabase secrets set GEM_CHAT_TOKEN=...` **e** `CONFIG.chatToken` em `docs/js/config.js` |
 | Usar outro projeto Supabase | `docs/js/config.js` ou Configurações → Avançado |
 
 ## Solução de problemas
@@ -214,6 +236,7 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 | `GROQ_API_KEY não configurada` (HTTP 503) | Falta o secret — veja o Passo 1 |
 | `Supabase 401/403` no histórico | `apikey` errada, ou `x-gem-owner` ausente; confira a publishable key |
 | `No 'Access-Control-Allow-Origin'` | A função não foi publicada ou está com versão antiga |
+| `Token de acesso inválido` (HTTP 401) | `CONFIG.chatToken` ≠ secret `GEM_CHAT_TOKEN`; confira Configurações → Avançado e dê **Ctrl+F5** (cache do JS após um deploy) |
 | Sidebar vazia após trocar de navegador | É o esperado: o `owner_key` é local por navegador |
 | `model_decommissioned` / modelo inválido | Use **Atualizar** no seletor e ajuste `ALLOWED_MODELS` |
-| Página 404 no Pages | Branch/folder errados, ou repositório privado em plano Free |
+| Página 404 no Pages | Branch/folder errados, repositório privado em plano Free, ou build ainda rodando (~30 s) |
