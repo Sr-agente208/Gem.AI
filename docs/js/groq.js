@@ -50,6 +50,21 @@ export async function fetchModels() {
   return [...new Set(ids)];
 }
 
+/** Health check real: gera alguns tokens na Groq e confirma que a chave funciona. */
+export async function testGeneration(model) {
+  const url = new URL(getFunctionUrl());
+  url.searchParams.set("test", "1");
+  url.searchParams.set("model", model);
+  url.searchParams.set("v", String(Date.now())); // evita cache do GET
+  const response = await fetch(url.toString(), { method: "GET", headers: authHeaders() });
+  if (!response.ok) throw await readError(response);
+  const payload = await response.json();
+  if (payload?.ok === false) {
+    throw new Error(payload.error || "A Groq não conseguiu gerar uma resposta de teste.");
+  }
+  return payload;
+}
+
 /**
  * Faz uma chamada com streaming. `onDelta` recebe cada pedaço de texto.
  * Retorna o texto completo gerado (inclusive quando o usuário cancela no meio).

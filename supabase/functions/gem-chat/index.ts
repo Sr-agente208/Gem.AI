@@ -5,19 +5,22 @@
 //   supabase secrets set GROQ_API_KEY=gsk_...
 //   supabase functions deploy gem-chat --no-verify-jwt
 //
+// GET             -> lista compacta de modelos de chat (texto) disponíveis na conta
+// GET ?test=1     -> health check: gera uma resposta minúscula e confirma a chave
+// POST            -> chat completion com streaming (SSE)
+//
 // Opcional: defina GEM_CHAT_TOKEN para exigir o header x-gem-token nas chamadas.
 
 const GROQ_URL = "https://api.groq.com/openai/v1";
 
+// Modelos de chat confirmados nesta conta Groq (verificados em 2026-11-24).
+// Mantido em sincronia com docs/js/config.js.
 const ALLOWED_MODELS = [
-  "llama-3.3-70b-versatile",
-  "llama-3.1-8b-instant",
+  "qwen/qwen3.8-27b",
   "openai/gpt-oss-120b",
   "openai/gpt-oss-20b",
-  "meta-llama/llama-4-scout-17b-16e-instruct",
-  "qwen/qwen3-32b",
 ];
-const DEFAULT_MODEL = "llama-3.3-70b-versatile";
+const DEFAULT_MODEL = "qwen/qwen3.8-27b";
 const DEFAULT_SYSTEM =
   "Você é o Gem.AI, um assistente útil, direto e cordial. Responda em português do Brasil, salvo pedido contrário.";
 
@@ -63,16 +66,71 @@ Deno.serve(async (req: Request): Promise<Response> => {
     );
   }
 
-  // GET = lista de modelos disponíveis na conta Groq (para o seletor da UI).
+  const url = new URL(req.url);
+
   if (req.method === "GET") {
+    // Health check barato — usado pelo botão "Testar conexão".
+    if (url.searchParams.get("test") === "1") {
+      const model = url.searchParams.get("model") || DEFAULT_MODEL;
+      try {
+        const upstream = await fetch(`${GROQ_URL}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${groqKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: "user", content: "Responda exatamente: OK" }],
+            max_completion_tokens: 512,
+            temperature: 0,
+            stream: false,
+          }),
+        });
+        const payload = await upstream.json().catch(() => ({}));
+        if (!upstream.ok) {
+          return json({
+            ok: false,
+            model,
+            error: payload?.error?.message || `A Groq retornou HTTP ${upstream.status}.`,
+          });
+        }
+        return json({
+          ok: true,
+          model,
+          reply: payload?.choices?.[0]?.message?.content || "",
+        });
+      } catch (error) {
+        return json({ ok: false, model, error: String(error) });
+      }
+    }
+
+    // Lista compacta: só modelos ativos que produzem texto (sem TTS, STT e guard rails).
     try {
       const upstream = await fetch(`${GROQ_URL}/models`, {
         headers: { Authorization: `Bearer ${groqKey}` },
       });
-      const body = await upstream.text();
-      return new Response(body, {
-        status: upstream.status,
-        headers: { ...CORS, "Content-Type": "application/json; charset=utf-8" },
+      const payload = await upstream.json().catch(() => ({}));
+      if (!upstream.ok) {
+        return json({
+          error: payload?.error?.message || `A Groq retornou HTTP ${upstream.status}.`,
+        });
+      }
+      const all = Array.isArray(payload?.data) ? payload.data : [];
+      const chat = all.filter(
+        (item: Record<string, unknown>) =>
+          item?.active !== false &&
+          Array.isArray(item.output_modalities) &&
+          (item.output_modalities as string[]).includes("text"),
+      );
+      return json({
+        object: "list",
+        total: all.length,
+        data: chat.map((item: Record<string, unknown>) => ({
+          id: item.id,
+          object: "model",
+          active: true,
+        })),
       });
     } catch (error) {
       return json({ error: "Falha ao consultar os modelos da Groq.", detail: String(error) }, 502);

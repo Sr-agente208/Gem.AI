@@ -7,7 +7,7 @@ import {
   saveConfigOverrides,
 } from "./config.js";
 import * as db from "./db.js";
-import { fetchModels, streamChat } from "./groq.js";
+import { fetchModels, streamChat, testGeneration } from "./groq.js";
 import { renderMarkdown, escapeHtml } from "./markdown.js";
 
 const $ = (id) => document.getElementById(id);
@@ -473,11 +473,13 @@ async function testConnection() {
     const ids = await fetchModels();
     const allowed = CONFIG.models.map((item) => item.id);
     const usable = allowed.filter((id) => ids.includes(id));
+    const health = await testGeneration(ui.modelSelect.value || CONFIG.defaultModel);
+    const sample = (health.reply || "").trim().slice(0, 80);
     ui.connectionResult.className = "connection-result ok";
     ui.connectionResult.textContent =
-      `✅ Tudo certo! ${ids.length} modelos na conta Groq; ` +
-      `${usable.length} habilitados neste app.\n` +
-      (usable.length ? `Disponíveis: ${usable.join(", ")}` : "Verifique a lista de modelos da Edge Function.");
+      `✅ Tudo certo! ${usable.length} modelo(s) de chat habilitado(s): ${usable.join(", ") || "—"}\n` +
+      `Teste de geração com ${health.model}: ${sample ? `“${sample}”` : "OK (sem texto de amostra)"}\n` +
+      `Histórico no Supabase: conectado.`;
     fillModelSelect(usable.length ? usable : null);
     setStatus("ok", "Supabase + Groq conectados");
   } catch (error) {

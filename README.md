@@ -42,10 +42,16 @@ As políticas de RLS só deixam ver/inserir/apagar linhas com aquele `owner_key`
 | --- | --- |
 | Projeto Supabase | `escola-de-jegues` · ref `jikizafsbrclkfgoccha` · região `ca-central-1` |
 | Migration `gem_ai_init` | ✅ aplicada (`gem_conversations`, `gem_messages`, 7 políticas RLS, trigger) |
-| Edge Function `gem-chat` | ✅ ativa, v1, `verify_jwt = false` |
-| Teste funcional | ✅ insert de conversa + mensagem; RLS isolou corretamente (1 linha para o dono, 0 para outro) |
-| **`GROQ_API_KEY`** | ⏳ **falta você configurar** (passo 1) |
+| Edge Function `gem-chat` | ✅ ativa, **v4**, `verify_jwt = false` |
+| `GROQ_API_KEY` | ✅ gravada como **secret** no Supabase (não está em nenhum arquivo) |
+| Teste do banco | ✅ insert de conversa + mensagem; RLS isolou (1 linha para o dono, 0 para outro) |
+| Teste da Groq | ✅ `GET ?test=1` gerou uma resposta real: `{"ok":true,"model":"qwen/qwen3.8-27b","reply":"OK"}` |
 | **GitHub Pages** | ⏳ **falta habilitar no painel do GitHub** (passo 2) |
+
+Modelos de chat disponíveis na conta e habilitados no app (verificados em 2026-11-24):
+`qwen/qwen3.8-27b` **(padrão)**, `openai/gpt-oss-120b`, `openai/gpt-oss-20b`.
+Os antigos `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `llama-4-scout` e `qwen/qwen3-32b`
+foram **descontinuados** pela Groq e retornam erro — por isso foram removidos da lista.
 
 > Tentei criar um projeto Supabase novo, mas sua conta já atingiu o limite de **2 projetos free ativos**.
 > Por isso as tabelas foram criadas no projeto existente, todas com prefixo `gem_` para não colidir
@@ -54,26 +60,34 @@ As políticas de RLS só deixam ver/inserir/apagar linhas com aquele `owner_key`
 
 ---
 
-## Passo 1 · Chave da Groq (obrigatório)
+## Passo 1 · Chave da Groq — ✅ já configurada
 
-1. Pegue uma chave em <https://console.groq.com/keys>.
-2. Configure como **secret do projeto Supabase** (não é variável do front-end):
+A `GROQ_API_KEY` já foi gravada como **secret** do projeto (via conector Supabase) e validada com
+uma geração real. Ela **não** está em `.env`, em `docs/` ou no Git.
+
+Para trocar/rotacionar a chave (recomendado se ela ficou exposta em algum lugar):
 
 ```bash
 supabase link --project-ref jikizafsbrclkfgoccha
-supabase secrets set GROQ_API_KEY=gsk_sua_chave_aqui
+supabase secrets set GROQ_API_KEY=gsk_nova_chave
 ```
 
-Ou pelo painel: **Project Settings → Edge Functions → Secrets → Add new secret**.
-Ou pelo conector Supabase desta conversa: `create_secrets` com
-`{ "name": "GROQ_API_KEY", "value": "gsk_..." }`.
+Ou pelo painel: **Project Settings → Edge Functions → Secrets → GROQ_API_KEY**.
+Não é preciso republicar a função depois de trocar um secret.
 
 Opcional (recomendado se o site for público): defina também `GEM_CHAT_TOKEN` e coloque o mesmo
 valor em **Configurações → Avançado → Token opcional da função**. A função passa a exigir o header
 `x-gem-token`, reduzindo o risco de terceiros usarem sua cota da Groq.
 
-> Dica: `GET /functions/v1/gem-chat` lista os modelos disponíveis na sua conta.
-> O botão **Testar conexão** nas Configurações usa exatamente esse endpoint.
+### Endpoints de diagnóstico da função
+
+| Chamada | Retorno |
+| --- | --- |
+| `GET /functions/v1/gem-chat` | Lista compacta só com modelos ativos que geram texto (`total` + `data[].id`) |
+| `GET /functions/v1/gem-chat?test=1&model=X` | Health check: gera alguns tokens e devolve `{ ok, model, reply }` |
+| `POST /functions/v1/gem-chat` | Chat completion em streaming (SSE) |
+
+O botão **Testar conexão** usa os dois GETs: lista os modelos habilitados e faz uma geração real.
 
 ---
 
