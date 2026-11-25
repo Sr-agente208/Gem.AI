@@ -2,8 +2,8 @@
 
 Chat com IA **100% estático**, feito para **GitHub Pages**:
 
-- **Supabase** → banco do histórico de conversas (PostgREST + RLS).
-- **Groq** → geração das respostas, em **streaming** (SSE).
+- **Supabase** → banco do histórico (PostgREST + RLS) **e** Storage privado dos anexos.
+- **Groq** → geração das respostas, em **streaming** (SSE), com **visão** para imagens.
 - **Edge Function `gem-chat`** → proxy entre o navegador e a Groq, guardando a `GROQ_API_KEY` como segredo.
 - **Zero build, zero dependências**: HTML + CSS + JavaScript ES modules puros em `docs/`.
 
@@ -23,6 +23,8 @@ Chat com IA **100% estático**, feito para **GitHub Pages**:
               │ apikey (publishable) + header x-gem-owner
               ├──────────────────────────► /rest/v1/gem_conversations
               │                            /rest/v1/gem_messages      ← histórico (RLS)
+              ├──────────────────────────► /storage/v1/object/gem-uploads/...
+              │                            /storage/v1/object/sign/... ← download temporário
               │
               └──────────────────────────► /functions/v1/gem-chat
                                               │  GROQ_API_KEY (Supabase Secret)
@@ -32,7 +34,9 @@ Chat com IA **100% estático**, feito para **GitHub Pages**:
 ```
 
 Cada navegador gera um UUID (`gem.owner` no `localStorage`) e o envia em `x-gem-owner`.
-As políticas de RLS só deixam ver/inserir/apagar linhas com aquele `owner_key`.
+As políticas de RLS (banco **e** `storage.objects`) só deixam ver/inserir/apagar linhas
+com aquele `owner_key`. Nenhum arquivo passa por um servidor próprio: o original vai
+direto para o Storage e apenas o texto/imagem processados no navegador vão ao modelo.
 
 ---
 
@@ -42,11 +46,13 @@ As políticas de RLS só deixam ver/inserir/apagar linhas com aquele `owner_key`
 | --- | --- |
 | Projeto Supabase | `escola-de-jegues` · ref `jikizafsbrclkfgoccha` · região `ca-central-1` |
 | Migration `gem_ai_init` | ✅ aplicada (`gem_conversations`, `gem_messages`, 7 políticas RLS, trigger) |
-| Edge Function `gem-chat` | ✅ ativa, **v6**, `verify_jwt = false` |
+| Migration `gem_ai_files` | ✅ aplicada (`attachments`, `display_content`, bucket `gem-uploads`, 4 políticas de Storage) |
+| Edge Function `gem-chat` | ✅ ativa, **v10**, `verify_jwt = false`, multimodal + diagnósticos |
 | `GROQ_API_KEY` | ✅ gravada como **secret** no Supabase (não está em nenhum arquivo) |
 | `GEM_CHAT_TOKEN` | ✅ secret no Supabase + valor padrão no `config.js`; exigido no POST |
 | Teste do banco | ✅ insert de conversa + mensagem; RLS isolou (1 linha para o dono, 0 para outro) |
-| Teste da Groq | ✅ `GET ?test=1` gerou resposta real: `{"ok":true,"model":"qwen/qwen3.8-27b","reply":"OK"}` |
+| Teste da Groq | ✅ texto, visão e POST SSE reais; `?test=1` → `{"ok":true,"model":"qwen/qwen3.8-27b","reply":"OK"}` |
+| Teste do Storage | ✅ upload/sign/list/delete como `anon` (200) e preflight CORS libera `x-gem-owner` |
 | **GitHub Pages** | ✅ **no ar** em <https://sr-agente208.github.io/Gem.AI/> · `status: built`, branch `/docs` |
 
 Modelos de chat disponíveis na conta e habilitados no app (verificados em 2026-11-24):
@@ -101,9 +107,14 @@ Os GETs de diagnóstico continuam abertos (não consomem cota relevante: o healt
 
 | Chamada | Retorno |
 | --- | --- |
-| `GET /functions/v1/gem-chat` | Lista compacta só com modelos ativos que geram texto (`total` + `data[].id`) |
-| `GET /functions/v1/gem-chat?test=1&model=X` | Health check: gera alguns tokens e devolve `{ ok, model, reply }` |
-| `POST /functions/v1/gem-chat` | Chat completion em streaming (SSE) |
+| `GET /functions/v1/gem-chat` | Modelos ativos que geram texto + `vision_models` |
+| `GET /functions/v1/gem-chat?test=1&model=X` | Health check de texto: `{ ok, model, reply }` |
+| `GET /functions/v1/gem-chat?test=1&vision=1` | Health check multimodal (PNG 32×32 em base64) |
+| `GET /functions/v1/gem-chat?storage=1` | Sobe um `.txt`, gera URL assinada, lista e apaga: status de cada passo |
+| `GET /functions/v1/gem-chat?sse=1` | Faz o POST do chat com e sem `x-gem-token`; valida SSE, `[DONE]` e `X-Gem-Model` |
+| `GET /functions/v1/gem-chat?sse=1&vision=1` | O mesmo, com imagem: confirma a troca automática para o modelo com visão |
+| `GET /functions/v1/gem-chat?cors=1` | Preflight CORS do REST e do Storage |
+| `POST /functions/v1/gem-chat` | Chat completion em streaming (SSE), texto e/ou até 3 imagens |
 
 O botão **Testar conexão** usa os dois GETs: lista os modelos habilitados e faz uma geração real.
 
@@ -139,7 +150,43 @@ O arquivo `docs/.nojekyll` evita que o Jekyll do Pages ignore arquivos.
 
 ---
 
-## Passo 3 · Rodar localmente (opcional)
+## Passo 3 · Envio de arquivos — ✅ implementado
+
+Clique no **clipe** ao lado do campo de mensagem, ou **arraste arquivos** para o composer.
+Os anexos aparecem como chips com miniatura, tamanho e botão de remover; envie junto com
+o texto (ou só os arquivos). Nas mensagens antigas, clique num anexo para abrir o original.
+
+| Tipo | O que acontece |
+| --- | --- |
+| **Imagens** (PNG/JPG/WebP/GIF…) | Reduzidas no `<canvas>` para até 1024 px (mínimo 32×32, exigido pela Groq), convertidas em JPEG e enviadas ao modelo como `image_url` em base64. |
+| **Texto** (`.txt`, `.md`, `.json`, `.csv`, `.py`, `.js`…) | Lido no navegador e incluído no prompt com marcadores `--- Arquivo: nome ---`. |
+| **PDF** | Texto extraído no navegador com `pdfjs-dist@4` (até 20 páginas) via CDN, carregado sob demanda. PDFs digitalizados sem camada de texto ficam salvos, mas não são "lidos" — aparece um aviso. |
+| **Outros** | Salvos no Storage e listados na bolha, mas o modelo recebe só um aviso de que não lê aquele formato. |
+
+Limites (`docs/js/config.js`): **5 arquivos** por mensagem, **10 MB** por arquivo (igual ao
+`file_size_limit` do bucket), **3 imagens** por requisição, **20.000 caracteres** extraídos
+por arquivo de texto/PDF. O proxy também corta em 3 imagens e 4 MB de base64 por imagem.
+
+- **Visão:** único modelo da conta que aceita imagem é `qwen/qwen3.8-27b`
+  (`CONFIG.visionModel`). Ao anexar imagens, o app troca automaticamente para ele — e a
+  função faz o mesmo no servidor, caso receba imagem com outro modelo. GPT-OSS não enxergam.
+- **Histórico:** `gem_messages.content` guarda o prompt real (texto + transcrições),
+  `display_content` guarda só o que o usuário digitou e `attachments` guarda os metadados
+  (`name`, `size`, `type`, `kind`, `path` e uma miniatura reduzida da imagem). Ao reabrir
+  uma conversa, as miniaturas e o contexto multimodal são reconstruídos.
+- **Privacidade:** bucket **`gem-uploads` é privado**. Caminho
+  `<owner_key>/<conversation_id>/<uuid>-<nome>`; as 4 políticas `gem_files_*` comparam
+  `(storage.foldername(name))[1]` com `gem_current_owner()`. O download usa
+  `POST /storage/v1/object/sign/...` com validade de **1 hora**. Apagar uma conversa
+  também tenta apagar os arquivos dela (melhor esforço).
+- **Sem backend próprio:** upload, extração e redimensionamento acontecem no navegador;
+  só a chamada à Groq passa pela Edge Function. A `GROQ_API_KEY` continua fora do front.
+
+> Aviso honesto: o isolamento por `x-gem-owner` é um UUID local, não login (veja Segurança).
+> Quem souber o UUID de outra pessoa poderia acessar os arquivos dela. Para produção, use
+> **Supabase Auth** + `auth.uid()` nas políticas do Storage.
+
+## Passo 4 · Rodar localmente (opcional)
 
 ```bash
 python3 -m http.server 5173 --directory docs
@@ -157,7 +204,8 @@ e para testar a conexão com Supabase + Groq.
 ```sql
 gem_conversations (id, owner_key, title, model, system_prompt, created_at, updated_at)
 gem_messages     (id, conversation_id → gem_conversations ON DELETE CASCADE,
-                  role, content, created_at)
+                  role, content, display_content, attachments jsonb, created_at)
+storage.buckets  ('gem-uploads', public = false, file_size_limit = 10485760)
 ```
 
 - `gem_current_owner()` lê `current_setting('request.headers')::json ->> 'x-gem-owner'`.
@@ -165,6 +213,9 @@ gem_messages     (id, conversation_id → gem_conversations ON DELETE CASCADE,
 - Trigger `gem_messages_touch` atualiza `updated_at` da conversa a cada mensagem (ordena a sidebar).
 - Políticas para `anon`/`authenticated`: `SELECT`, `INSERT`, `UPDATE`, `DELETE` em conversas;
   `SELECT`, `INSERT`, `DELETE` em mensagens — sempre limitadas ao `owner_key` da requisição.
+- `gem_files_select/insert/update/delete` em `storage.objects`: mesmo `owner_key`, usando
+  `storage.foldername(name)[1]`. Validadas com upload, URL assinada, listagem e exclusão reais
+  (HTTP 200 como `anon`, sem `service_role`).
 
 Para reaplicar do zero em outro projeto:
 
@@ -208,14 +259,16 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 │   ├── index.html
 │   ├── styles.css
 │   └── js/
-│       ├── config.js            # URL + publishable key + token + modelos + settings locais
-│       ├── db.js                # cliente PostgREST (conversas e mensagens)
+│       ├── config.js            # URL + publishable key + token + modelos + limites de arquivo
+│       ├── db.js                # cliente PostgREST (conversas e mensagens + anexos)
+│       ├── files.js             # anexos: validação, PDF, canvas, upload/URL assinada/limpeza
 │       ├── groq.js              # cliente SSE da Edge Function
 │       ├── markdown.js          # renderizador Markdown seguro
-│       └── app.js               # UI, histórico, streaming, modal de configs
+│       └── app.js               # UI, histórico, streaming, anexos, modal de configs
 └── supabase/
     ├── config.toml
     ├── migrations/202611240001_gem_ai_init.sql
+    ├── migrations/202611240002_gem_ai_files.sql
     └── functions/gem-chat/index.ts
 ```
 
@@ -227,6 +280,8 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 | Mudar o comportamento padrão | `DEFAULT_SYSTEM` na função e `defaultSystemPrompt` no `config.js` |
 | Mudar cores/layout | `docs/styles.css` (variáveis no `:root`) |
 | Trocar o token de acesso | `supabase secrets set GEM_CHAT_TOKEN=...` **e** `CONFIG.chatToken` em `docs/js/config.js` |
+| Mudar limites de anexo | `CONFIG.maxFilesPerMessage`, `maxFileBytes`, `maxImagesPerMessage`, `maxExtractChars`, `imageMaxEdge` em `docs/js/config.js` (mantenha `maxFileBytes` ≤ `file_size_limit` do bucket) |
+| Trocar o bucket | `CONFIG.storageBucket` + a migration `202611240002_gem_ai_files.sql` + `index.ts` |
 | Usar outro projeto Supabase | `docs/js/config.js` ou Configurações → Avançado |
 
 ## Solução de problemas
@@ -239,4 +294,9 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 | `Token de acesso inválido` (HTTP 401) | `CONFIG.chatToken` ≠ secret `GEM_CHAT_TOKEN`; confira Configurações → Avançado e dê **Ctrl+F5** (cache do JS após um deploy) |
 | Sidebar vazia após trocar de navegador | É o esperado: o `owner_key` é local por navegador |
 | `model_decommissioned` / modelo inválido | Use **Atualizar** no seletor e ajuste `ALLOWED_MODELS` |
+| `Não foi possível salvar … no Storage` | Dono/chave divergentes ou bucket ausente: rode `?storage=1` na função e confira `CONFIG.storageBucket` |
+| PDF sem texto extraído | PDF digitalizado (imagem) ou CDN do `pdfjs-dist` bloqueada; o arquivo original continua disponível para download |
+| `Image must have at least 32 pixels` | Não deve ocorrer: `files.js` centraliza imagens pequenas num canvas 32×32 |
+| Imagens ignoradas com GPT-OSS | Esperado: o app e o proxy trocam automaticamente para `qwen/qwen3.8-27b` |
+| Anexo não abre ao clicar | Link assinado expira em 1 h; recarregue a conversa para gerar outro |
 | Página 404 no Pages | Branch/folder errados, repositório privado em plano Free, ou build ainda rodando (~30 s) |

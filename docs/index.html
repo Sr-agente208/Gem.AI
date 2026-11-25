@@ -78,12 +78,18 @@
         </section>
       </div>
 
-      <div class="composer-wrap">
+      <div id="composerWrap" class="composer-wrap">
+        <div id="attachmentTray" class="attachment-tray" hidden></div>
+        <div id="dropHint" class="drop-hint" hidden>Solte os arquivos aqui para anexar</div>
         <form id="composerForm" class="composer" autocomplete="off">
+          <input id="fileInput" type="file" multiple hidden />
+          <button id="attachBtn" class="attach-btn" type="button" title="Anexar arquivos" aria-label="Anexar arquivos">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5l-8.4 8.4a5 5 0 0 1-7.1-7.1l8.5-8.5a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-2.8-2.8l7.8-7.8"/></svg>
+          </button>
           <textarea
             id="promptInput"
             rows="1"
-            placeholder="Pergunte qualquer coisa…"
+            placeholder="Pergunte qualquer coisa… (ou anexe arquivos)"
             aria-label="Mensagem"
           ></textarea>
           <button id="sendBtn" class="send-btn" type="submit" title="Enviar" aria-label="Enviar mensagem">
@@ -93,7 +99,7 @@
             <span></span>
           </button>
         </form>
-        <p class="composer-hint">Enter envia · Shift + Enter quebra linha · as respostas chegam em tempo real</p>
+        <p class="composer-hint">Enter envia · Shift + Enter quebra linha · arraste arquivos aqui · imagens, PDF, texto (até 10 MB)</p>
       </div>
     </main>
 

@@ -9,6 +9,17 @@ import {
 import * as db from "./db.js";
 import { fetchModels, streamChat, testGeneration } from "./groq.js";
 import { renderMarkdown, escapeHtml } from "./markdown.js";
+import {
+  processFiles,
+  buildContent,
+  textFromContent,
+  messageToPayload,
+  uploadAttachments,
+  getSignedUrl,
+  deleteConversationFiles,
+  formatBytes,
+  kindLabel,
+} from "./files.js";
 
 const $ = (id) => document.getElementById(id);
 const ui = {
@@ -29,9 +40,14 @@ const ui = {
   messages: $("messages"),
   emptyState: $("emptyState"),
   composerForm: $("composerForm"),
+  composerWrap: $("composerWrap"),
   promptInput: $("promptInput"),
   sendBtn: $("sendBtn"),
   stopBtn: $("stopBtn"),
+  fileInput: $("fileInput"),
+  attachBtn: $("attachBtn"),
+  attachmentTray: $("attachmentTray"),
+  dropHint: $("dropHint"),
   toast: $("toast"),
   modal: $("settingsModal"),
   settingsClose: $("settingsClose"),
@@ -58,6 +74,8 @@ const state = {
   sending: false,
   controller: null,
   settings: getSettings(),
+  pending: [], // anexos ainda não enviados
+  preparing: false, // processando arquivos (PDF/imagem)
 };
 
 /* ------------------------------ utilidades ------------------------------ */
@@ -114,6 +132,123 @@ function toggleSending(sending) {
   ui.sendBtn.disabled = sending;
 }
 
+/* ------------------------------ anexos ------------------------------ */
+
+function attachmentChip(meta, removable = false) {
+  const name = escapeHtml(meta.name || "arquivo");
+  const note = meta.note ? escapeHtml(meta.note) : "";
+  const sub = `${formatBytes(meta.size)} · ${kindLabel(meta.kind)}${note ? " · aviso" : ""}`;
+  const preview =
+    meta.kind === "image" && meta.dataUrl
+      ? `<img src="${escapeHtml(meta.dataUrl)}" alt="" />`
+      : `<span class="file-icon" aria-hidden="true">${meta.kind === "pdf" ? "📕" : meta.kind === "text" ? "📄" : "📎"}</span>`;
+
+  if (removable) {
+    return (
+      `<div class="file-chip${note ? " warn" : ""}" title="${note || name}">` +
+      `${preview}<span class="file-meta"><span class="file-name">${name}</span>` +
+      `<span class="file-sub">${escapeHtml(sub)}</span></span>` +
+      `<button class="file-remove" type="button" data-remove="${escapeHtml(meta.id)}" aria-label="Remover anexo">✕</button></div>`
+    );
+  }
+
+  const attrs = meta.path
+    ? ` type="button" data-path="${escapeHtml(meta.path)}" data-name="${name}"`
+    : "";
+  const tag = meta.path ? "button" : "div";
+  const action = meta.path ? '<span class="file-dl" aria-hidden="true">⬇</span>' : "";
+  return (
+    `<${tag} class="file-chip${note ? " warn" : ""}"${attrs} title="${note || name}">` +
+    `${preview}<span class="file-meta"><span class="file-name">${name}</span>` +
+    `<span class="file-sub">${escapeHtml(sub)}</span></span>${action}</${tag}>`
+  );
+}
+
+function renderBubbleAttachments(attachments) {
+  if (!attachments || !attachments.length) return "";
+  const images = attachments.filter((item) => item.kind === "image" && item.dataUrl);
+  const thumbs = images.length
+    ? `<div class="bubble-images">${images
+        .map(
+          (item) =>
+            `<img src="${escapeHtml(item.dataUrl)}" alt="${escapeHtml(item.name)}" />`,
+        )
+        .join("")}</div>`
+    : "";
+  return `${thumbs}<div class="bubble-attachments">${attachments
+    .map((item) => attachmentChip(item, false))
+    .join("")}</div>`;
+}
+
+function renderPending() {
+  ui.attachmentTray.hidden = state.pending.length === 0;
+  ui.attachmentTray.innerHTML = state.pending
+    .map((item) => attachmentChip(item, true))
+    .join("");
+  ui.attachBtn.disabled = state.preparing;
+}
+
+function clearPending() {
+  state.pending = [];
+  ui.fileInput.value = "";
+  renderPending();
+}
+
+async function addFiles(fileList) {
+  if (state.preparing || !fileList || !fileList.length) return;
+  state.preparing = true;
+  renderPending();
+  try {
+    const { attachments, warnings } = await processFiles(fileList, state.pending);
+    state.pending.push(...attachments);
+    for (const warning of warnings) showToast(warning, "error");
+    if (attachments.length) {
+      showToast(`${attachments.length} arquivo(s) pronto(s) para enviar.`, "ok");
+    }
+  } catch (error) {
+    showToast(error?.message || "Falha ao preparar os arquivos.", "error");
+  } finally {
+    state.preparing = false;
+    ui.fileInput.value = "";
+    renderPending();
+  }
+}
+
+async function openAttachment(path) {
+  if (!path) {
+    showToast("Este arquivo não foi salvo no Storage.");
+    return;
+  }
+  try {
+    const url = await getSignedUrl(path);
+    window.open(url, "_blank", "noopener,noreferrer");
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+/** Só a última mensagem do usuário mantém as imagens (limite de 3 por requisição). */
+function buildHistory() {
+  const recent = state.messages.slice(-20);
+  let lastWithImages = -1;
+  recent.forEach((message, index) => {
+    if (
+      message.role === "user" &&
+      Array.isArray(message.content) &&
+      message.content.some((part) => part.type === "image_url")
+    ) {
+      lastWithImages = index;
+    }
+  });
+  return recent.map((message, index) => {
+    let content = message.content;
+    if (Array.isArray(content) && index !== lastWithImages) {
+      content = textFromContent(content) || "(imagem anexada anteriormente)";
+    }
+    return { role: message.role, content };
+  });
+}
+
 /* ------------------------------ renderização ------------------------------ */
 
 function renderSidebar() {
@@ -142,11 +277,11 @@ function renderSidebar() {
   }
 }
 
-function addUserBubble(text) {
+function addUserBubble(text, attachments = []) {
   const message = document.createElement("div");
   message.className = "message user";
   message.innerHTML =
-    `<div class="bubble">${escapeHtml(text)}</div>` +
+    `<div class="bubble">${escapeHtml(text)}${renderBubbleAttachments(attachments)}</div>` +
     '<div class="avatar" aria-hidden="true">☺</div>';
   ui.messages.appendChild(message);
   scrollToBottom(true);
@@ -189,11 +324,12 @@ function setBubbleError(target, message) {
 function renderStoredMessages() {
   ui.messages.innerHTML = "";
   for (const message of state.messages) {
+    const display = message.display ?? textFromContent(message.content);
     if (message.role === "user") {
-      addUserBubble(message.content);
+      addUserBubble(display, message.attachments || []);
     } else {
       const target = addAssistantBubble();
-      setAssistantContent(target, message.content, false);
+      setAssistantContent(target, display, false);
     }
   }
   ui.emptyState.hidden = state.messages.length > 0;
@@ -203,6 +339,7 @@ function renderStoredMessages() {
 function showEmptyView() {
   state.activeId = null;
   state.messages = [];
+  clearPending();
   ui.messages.innerHTML = "";
   ui.emptyState.hidden = false;
   ui.chatTitle.textContent = "Novo chat";
@@ -242,6 +379,7 @@ async function openConversation(id) {
   }
   const conversation = state.conversations.find((item) => item.id === id);
   if (!conversation) return;
+  if (id !== state.activeId) clearPending(); // anexos pertencem à mensagem em composição
   state.activeId = id;
   renderSidebar();
   updateHeader(conversation);
@@ -249,10 +387,15 @@ async function openConversation(id) {
   ui.messages.innerHTML = '<div class="message assistant"><div class="avatar">✦</div><div class="bubble"><span class="thinking"><i></i><i></i><i></i> carregando…</span></div></div>';
   try {
     const rows = await db.listMessages(id);
-    state.messages = (rows || []).map((row) => ({
-      role: row.role,
-      content: row.content,
-    }));
+    state.messages = (rows || []).map((row) => {
+      const content = messageToPayload(row);
+      return {
+        role: row.role,
+        content,
+        display: row.display_content ?? textFromContent(content),
+        attachments: Array.isArray(row.attachments) ? row.attachments : [],
+      };
+    });
     renderStoredMessages();
   } catch (error) {
     state.messages = [];
@@ -266,6 +409,7 @@ async function removeConversation(id) {
   if (!window.confirm("Apagar esta conversa e todas as mensagens dela?")) return;
   try {
     await db.deleteConversation(id);
+    deleteConversationFiles(id); // melhor esforço: remove também os arquivos do Storage
     if (state.activeId === id) {
       state.controller?.abort();
       showEmptyView();
@@ -280,7 +424,13 @@ async function removeConversation(id) {
 
 /* ------------------------------ envio ------------------------------ */
 
-async function sendMessage(text) {
+async function sendMessage(text, options = {}) {
+  const {
+    attachments = [],
+    content = text,
+    model = state.settings.model,
+    titleText = text,
+  } = options;
   toggleSending(true);
   let conversation = state.conversations.find((item) => item.id === state.activeId) || null;
   let target = null;
@@ -290,7 +440,7 @@ async function sendMessage(text) {
   try {
     if (!conversation) {
       conversation = await db.createConversation({
-        title: makeTitle(text),
+        title: makeTitle(titleText || "Arquivos anexados"),
         model: state.settings.model,
         systemPrompt: state.settings.systemPrompt,
       });
@@ -300,18 +450,24 @@ async function sendMessage(text) {
       updateHeader(conversation);
     }
 
-    ui.emptyState.hidden = true;
-    addUserBubble(text);
-    target = addAssistantBubble();
-    state.messages.push({ role: "user", content: text });
+    // Originais vão para o Storage privado; falhas viram aviso, não bloqueiam o chat.
+    let metas = [];
+    if (attachments.length) {
+      const upload = await uploadAttachments(conversation.id, attachments);
+      metas = upload.metas;
+      for (const warning of upload.warnings) showToast(warning, "error");
+    }
 
-    await db.insertMessages(conversation.id, [{ role: "user", content: text }]);
+    ui.emptyState.hidden = true;
+    addUserBubble(text, metas);
+    target = addAssistantBubble();
+    const userMessage = { role: "user", content, display: text, attachments: metas };
+    state.messages.push(userMessage);
+
+    await db.insertMessages(conversation.id, [userMessage]);
     persistedUser = true;
 
-    const history = state.messages.slice(-20).map((item) => ({
-      role: item.role,
-      content: item.content,
-    }));
+    const history = buildHistory();
 
     state.controller = new AbortController();
     let pending = false;
@@ -328,7 +484,7 @@ async function sendMessage(text) {
 
     await streamChat({
       messages: history,
-      model: state.settings.model,
+      model,
       systemPrompt: state.settings.systemPrompt,
       temperature: Number(state.settings.temperature),
       maxTokens: Number(state.settings.maxTokens),
@@ -338,7 +494,12 @@ async function sendMessage(text) {
 
     if (target) setAssistantContent(target, accumulated, false);
     if (accumulated.trim()) {
-      state.messages.push({ role: "assistant", content: accumulated });
+      state.messages.push({
+        role: "assistant",
+        content: accumulated,
+        display: accumulated,
+        attachments: [],
+      });
       await db.insertMessages(conversation.id, [
         { role: "assistant", content: accumulated },
       ]);
@@ -357,7 +518,12 @@ async function sendMessage(text) {
         );
       }
       if (accumulated.trim() && conversation) {
-        state.messages.push({ role: "assistant", content: accumulated });
+        state.messages.push({
+          role: "assistant",
+          content: accumulated,
+          display: accumulated,
+          attachments: [],
+        });
         db.insertMessages(conversation.id, [
           { role: "assistant", content: accumulated },
         ]).catch(() => {});
@@ -381,11 +547,27 @@ async function sendMessage(text) {
 
 function handleSubmit(event) {
   event.preventDefault();
+  if (state.sending || state.preparing) return;
   const text = ui.promptInput.value.trim();
-  if (!text || state.sending) return;
+  const attachments = [...state.pending];
+  if (!text && !attachments.length) return;
+
+  const content = buildContent(text, attachments);
+  const hasImages = attachments.some((item) => item.kind === "image" && item.dataUrl);
+  const model = hasImages ? getConfig().visionModel : state.settings.model;
+  if (hasImages && model !== state.settings.model) {
+    showToast(`Imagens analisadas com ${model} (modelo com visão).`, "ok");
+  }
+
   ui.promptInput.value = "";
   autosize();
-  sendMessage(text);
+  clearPending();
+  sendMessage(text || "📎 Arquivo(s) anexado(s)", {
+    attachments,
+    content,
+    model,
+    titleText: text || attachments.map((item) => item.name).join(", "),
+  });
 }
 
 /* ------------------------------ modal ------------------------------ */
@@ -530,6 +712,50 @@ function bindEvents() {
   });
   ui.stopBtn.addEventListener("click", () => state.controller?.abort());
 
+  ui.attachBtn.addEventListener("click", () => ui.fileInput.click());
+  ui.fileInput.addEventListener("change", (event) => addFiles(event.target.files));
+  ui.attachmentTray.addEventListener("click", (event) => {
+    const button = event.target.closest(".file-remove");
+    if (!button) return;
+    state.pending = state.pending.filter((item) => item.id !== button.dataset.remove);
+    renderPending();
+    ui.promptInput.focus();
+  });
+
+  let dragDepth = 0;
+  const showDrop = (show) => {
+    ui.dropHint.hidden = !show;
+    ui.composerWrap.classList.toggle("dragging", show);
+  };
+  const hasFiles = (event) =>
+    Array.from(event.dataTransfer?.types || []).includes("Files");
+  ui.composerWrap.addEventListener("dragenter", (event) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    dragDepth += 1;
+    showDrop(true);
+  });
+  ui.composerWrap.addEventListener("dragover", (event) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  });
+  ui.composerWrap.addEventListener("dragleave", () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) showDrop(false);
+  });
+  ui.composerWrap.addEventListener("drop", (event) => {
+    if (!event.dataTransfer?.files?.length) return;
+    event.preventDefault();
+    dragDepth = 0;
+    showDrop(false);
+    addFiles(event.dataTransfer.files);
+  });
+  window.addEventListener("dragover", (event) => {
+    if (hasFiles(event)) event.preventDefault();
+  });
+  window.addEventListener("drop", (event) => event.preventDefault());
+
   ui.newChatBtn.addEventListener("click", () => {
     if (state.sending) state.controller?.abort();
     showEmptyView();
@@ -554,6 +780,11 @@ function bindEvents() {
   });
 
   ui.messages.addEventListener("click", (event) => {
+    const chip = event.target.closest(".file-chip[data-path]");
+    if (chip) {
+      openAttachment(chip.dataset.path, chip.dataset.name);
+      return;
+    }
     const button = event.target.closest(".copy-code");
     if (!button) return;
     const code = button.closest(".code-block")?.querySelector("code")?.textContent || "";

@@ -90,15 +90,28 @@ export function deleteConversation(id) {
 export function listMessages(conversationId) {
   return request(
     `gem_messages?conversation_id=eq.${encodeURIComponent(conversationId)}` +
-      "&select=id,role,content,created_at&order=created_at.asc&limit=500",
+      "&select=id,role,content,display_content,attachments,created_at&order=created_at.asc&limit=500",
   );
+}
+
+function asText(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((part) => part && part.type === "text")
+      .map((part) => part.text || "")
+      .join("\n\n");
+  }
+  return String(content ?? "");
 }
 
 export function insertMessages(conversationId, messages) {
   const rows = messages.map((message) => ({
     conversation_id: conversationId,
     role: message.role,
-    content: message.content,
+    content: asText(message.content),
+    display_content: message.display ?? null,
+    attachments: message.attachments || [],
   }));
   return request("gem_messages", {
     method: "POST",

@@ -21,6 +21,20 @@ export const CONFIG = {
     { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B · mais capaz" },
     { id: "openai/gpt-oss-20b", label: "GPT-OSS 20B · leve" },
   ],
+  // ---- Arquivos ----
+  storageBucket: "gem-uploads",
+  visionModel: "qwen/qwen3.8-27b", // único modelo da conta que aceita imagens
+  maxFilesPerMessage: 5,
+  maxFileBytes: 10 * 1024 * 1024, // bate com file_size_limit do bucket
+  maxImagesPerMessage: 3, // limite da Groq para qwen/qwen3.8-27b
+  maxExtractChars: 20000, // por arquivo de texto/PDF
+  imageMaxEdge: 1024, // downscale antes de virar base64
+  textExtensions: [
+    "txt", "md", "markdown", "json", "jsonl", "csv", "tsv", "log", "xml", "yaml", "yml",
+    "html", "htm", "css", "js", "mjs", "cjs", "jsx", "ts", "tsx", "py", "rb", "go", "java",
+    "c", "h", "cpp", "hpp", "cs", "php", "sh", "bash", "sql", "ini", "cfg", "toml", "env",
+    "rst", "tex", "svg", "vue", "svelte", "gradle", "properties",
+  ],
 };
 
 const CONFIG_KEY = "gem.config";
@@ -78,4 +92,8 @@ export function getRestUrl() {
 export function getFunctionUrl() {
   const cfg = getConfig();
   return `${cfg.supabaseUrl.replace(/\/+$/, "")}/functions/v1/${cfg.functionName}`;
+}
+
+export function getStorageUrl() {
+  return `${getConfig().supabaseUrl.replace(/\/+$/, "")}/storage/v1`;
 }
