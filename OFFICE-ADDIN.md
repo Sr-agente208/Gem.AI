@@ -142,6 +142,7 @@ também se o painel for aberto fora do Office (modo sem contexto).
 | Sintoma | Causa / ação |
 | --- | --- |
 | Badge "fora do Office" / "Office.js não carregou" | CDN `officeapis.public.onecdn.static.microsoft` bloqueada. O `onerror` tenta `appsforoffice.microsoft.com/lib/1/hosted/office.js`; libere uma das duas no firewall/proxy |
+| "Office.js carregou, mas esta página não está dentro de um documento…" | **Esperado** ao abrir `taskpane.html` direto no navegador: a biblioteca carrega e `Office.onReady()` resolve com `host: null`. O painel valida o host, desabilita a leitura e continua usable só com a pergunta |
 | Botão não aparece na faixa | Manifesto sem `VersionOverrides` ou sideload incompleto; refaça o upload e use a aba **Página Inicial** |
 | "Não foi possível ler o documento" | Selecione um trecho no host e tente de novo. Em PowerPoint antigo, atualize o Office (PowerPointApi 1.4) |
 | `Token de acesso inválido` (401) | Abra as Configurações do **chat** e confira `GEM_CHAT_TOKEN`; mesma origem, mesmo `localStorage` |

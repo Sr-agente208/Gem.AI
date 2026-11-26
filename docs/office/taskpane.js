@@ -383,36 +383,50 @@ function bindEvents() {
   });
 }
 
+/** Estado "sem contexto": CDN bloqueada OU página aberta fora de um host. */
+function markOutside(message) {
+  state.officeReady = false;
+  state.host = null;
+  ui.hostBadge.textContent = "fora do Office";
+  ui.hostBadge.className = "host-badge bad";
+  ui.includeDoc.checked = false;
+  ui.includeDoc.disabled = true;
+  ui.readBtn.disabled = true;
+  ui.insertBtn.disabled = true;
+  ui.docInfo.textContent = "indisponível";
+  setStatus(
+    `${message} Você ainda pode fazer perguntas sem o documento, ou abrir o chat completo.`,
+    "bad",
+  );
+}
+
 (async function boot() {
   bindEvents();
   try {
     await waitForOffice();
     const info = await globalThis.Office.onReady();
+    const rawHost = info?.host || globalThis.Office.context?.host;
+    const host = hostLabel(rawHost);
+    // office.js carrega até num navegador comum; onReady resolve com host nulo.
+    // Só há documento para ler quando o host é Word/Excel/PowerPoint.
+    if (!["Word", "Excel", "PowerPoint"].includes(host)) {
+      markOutside(
+        "Office.js carregou, mas esta página não está dentro de um documento do " +
+        "Word, Excel ou PowerPoint.",
+      );
+      return;
+    }
     state.officeReady = true;
-    state.host = hostLabel(info?.host || globalThis.Office.context?.host);
-    ui.hostBadge.textContent = state.host;
+    state.host = host;
+    ui.hostBadge.textContent = host;
     ui.hostBadge.className = "host-badge ok";
     const version = globalThis.Office.context?.diagnostics?.version || "";
     setStatus(
-      `Conectado ao ${state.host}${version ? ` (${version})` : ""}. ` +
+      `Conectado ao ${host}${version ? ` (${version})` : ""}. ` +
       "Clique em Ler documento ou em Analisar com IA.",
       "ok",
     );
   } catch (error) {
-    // Página aberta fora do Office ou CDN bloqueada: continua útil, sem contexto.
-    state.officeReady = false;
-    state.host = null;
-    ui.hostBadge.textContent = "fora do Office";
-    ui.hostBadge.className = "host-badge bad";
-    ui.includeDoc.checked = false;
-    ui.includeDoc.disabled = true;
-    ui.readBtn.disabled = true;
-    ui.insertBtn.disabled = true;
-    ui.docInfo.textContent = "indisponível";
-    setStatus(
-      `${error?.message || "Office.js indisponível"} ` +
-      "Você ainda pode fazer perguntas sem o documento, ou abrir o chat completo.",
-      "bad",
-    );
+    markOutside(error?.message || "Office.js indisponível (CDN bloqueada ou runtime não inicializado).");
   }
 })();
