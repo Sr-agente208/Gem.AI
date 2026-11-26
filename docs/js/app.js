@@ -199,7 +199,11 @@ function renderPending() {
   ui.attachmentTray.innerHTML = state.pending
     .map((item) => attachmentChip(item, true))
     .join("");
-  ui.attachBtn.disabled = state.preparing;
+  // <label> não aceita `disabled`: desabilitamos o input e bloqueamos o toque.
+  const busy = state.preparing;
+  ui.fileInput.disabled = busy;
+  ui.attachBtn.classList.toggle("disabled", busy);
+  ui.attachBtn.setAttribute("aria-disabled", busy ? "true" : "false");
 }
 
 function clearPending() {
@@ -740,7 +744,15 @@ function bindEvents() {
   });
   ui.stopBtn.addEventListener("click", () => state.controller?.abort());
 
-  ui.attachBtn.addEventListener("click", () => ui.fileInput.click());
+  // O <label for="fileInput"> abre o seletor nativo sem depender de .click()
+  // num input display:none — e é isso que falha no iOS Safari. Mantemos o
+  // suporte a teclado e o change, que é universal.
+  ui.attachBtn.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (!state.preparing) ui.fileInput.click();
+    }
+  });
   ui.fileInput.addEventListener("change", (event) => addFiles(event.target.files));
   ui.attachmentTray.addEventListener("click", (event) => {
     const button = event.target.closest(".file-remove");
@@ -883,9 +895,12 @@ function bindEvents() {
 
 (async function boot() {
   bindEvents();
-  ui.composerHint.textContent =
-    `Enter envia · Shift + Enter quebra linha · arraste arquivos aqui · ` +
-    `imagens, PDF, texto (até ${formatBytes(getConfig().maxFileBytes)})`;
+  const isTouch = window.matchMedia?.("(hover: none), (pointer: coarse)").matches;
+  const sizeHint = formatBytes(getConfig().maxFileBytes);
+  ui.composerHint.textContent = isTouch
+    ? `Toque no clipe para anexar · toque em enviar para responder · até ${sizeHint} por arquivo`
+    : `Enter envia · Shift + Enter quebra linha · arraste arquivos aqui · ` +
+      `imagens, PDF, texto (até ${sizeHint})`;
   ui.modelPill.textContent = state.settings.model;
   try {
     await loadConversations();

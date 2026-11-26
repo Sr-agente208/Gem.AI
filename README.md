@@ -227,6 +227,27 @@ para o que faz bem: versionar o código e publicar o site a cada `git push`.
 > Quem souber o UUID de outra pessoa poderia acessar os arquivos dela. Para produção, use
 > **Supabase Auth** + `auth.uid()` nas políticas do Storage.
 
+### Mobile / toque — ✅ corrigido
+
+O botão de anexar não abria a galeria em celulares (principalmente iOS Safari).
+Causas e correções:
+
+| Causa | Correção |
+| --- | --- |
+| `<input type="file" hidden>` + `.click()` por JS | Substituído por **`<label for="fileInput">`** e input invisível (`opacity:0`, 1×1px, **sem `display:none`**). O label abre o seletor nativo sem depender de JS — validado com jsdom (clique no label dispara o input). |
+| Alvo de toque de 34 px | **44×44 px** no clipe, enviar e parar; **40 px** no "remover anexo"; chips clicáveis com 44 px de altura |
+| `textarea` com 15 px → iOS dá zoom ao focar e empurra o composer | `input, select, textarea { font-size: 16px }` no mobile |
+| `height: 100vh` fica sob a barra de endereço do Safari | `100dvh` em `body`, `.chat`, `.sidebar` e no modal |
+| Botão de apagar conversa só aparecia no `:hover` | `@media (hover: none)` deixa `.conv-delete` sempre visível com 36 px |
+| Home indicator / notch | `viewport-fit=cover` + `env(safe-area-inset-bottom)` no composer, toast e modal |
+| Hovers "presos" e delay de 300 ms | `touch-action: manipulation`, `-webkit-tap-highlight-color: transparent`, `-webkit-overflow-scrolling: touch` |
+| Texto do hint falava em "arrastar" | Em telas de toque: "Toque no clipe para anexar · toque em enviar…" |
+| Fotos de iPhone (`.heic`/`.heif`) | Reconhecidas como extensão de imagem |
+| Download por `link.click()` falha em WebViews in-app | Fallback `window.open(objectUrl)`; mantido `link.rel="noopener"` |
+
+O `<label>` mantém suporte a teclado (Enter/Espaço) e `aria-disabled` enquanto um arquivo
+está sendo processado. Não há dependência nova: continua HTML/CSS/JS puros.
+
 ## Passo 4 · Rodar localmente (opcional)
 
 ```bash

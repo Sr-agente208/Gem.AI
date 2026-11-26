@@ -38,7 +38,7 @@ function guessKind(file) {
   const mime = (file.type || "").toLowerCase();
   if (
     mime.startsWith("image/") ||
-    ["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif"].includes(ext)
+    ["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif", "heic", "heif"].includes(ext)
   ) {
     return "image";
   }
@@ -444,8 +444,14 @@ export async function downloadAttachment(meta) {
   const link = document.createElement("a");
   link.href = objectUrl;
   link.download = meta.name || "arquivo";
+  link.rel = "noopener";
   document.body.appendChild(link);
-  link.click();
+  try {
+    link.click();
+  } catch {
+    // WebViews de iOS/alguns navegadores in-app não disparam o download por click().
+    window.open(objectUrl, "_blank", "noopener,noreferrer");
+  }
   link.remove();
   setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
   return { bytes: blob.size, parts: paths.length };
