@@ -160,13 +160,43 @@ o texto (ou só os arquivos). Nas mensagens antigas, clique num anexo para abrir
 
 | Tipo | O que acontece |
 | --- | --- |
-| **Imagens** (PNG/JPG/WebP/GIF…) | Reduzidas no `<canvas>` para até 1024 px (mínimo 32×32, exigido pela Groq), convertidas em JPEG e enviadas ao modelo como `image_url` em base64. |
-| **Texto** (`.txt`, `.md`, `.json`, `.csv`, `.py`, `.js`, `.xml`, `.sql`…) | Lido no navegador e incluído no prompt com marcadores `--- Arquivo: nome ---`. |
+| **Fotos** (PNG/JPG/WebP/GIF/HEIC…) | Reduzidas no `<canvas>` para até 1024 px (mínimo 32×32, exigido pela Groq), convertidas em JPEG e enviadas ao modelo de visão como `image_url`. As dimensões originais são informadas no prompt e o app troca automaticamente para `qwen/qwen3.8-27b`. |
+| **Vídeos** (`.mp4` `.mov` `.m4v` `.webm` `.3gp` …) | **Amostragem de 3 fotogramas** (10%, 50%, 90% da duração) via `<video>` + `<canvas>`, sem ffmpeg e sem servidor. Duração, resolução e o instante de cada frame vão no prompt; os JPEGs vão como `image_url`. |
+| **Planilhas** (`.csv` `.tsv` `.xlsx` `.xls` `.xlsm` `.xlsb` `.ods` …) | Células em tabulação **+ resumo estatístico automático**: tipo de cada coluna, soma, média, mínimo, máximo, valores distintos e mais frequentes — calculados no navegador antes de enviar, para a IA não chutar totais. |
+| **Texto** (`.txt`, `.md`, `.json`, `.py`, `.js`, `.xml`, `.sql`…) | Lido no navegador e incluído no prompt com marcadores `--- Arquivo: nome ---`. |
 | **PDF** | Texto extraído **localmente** em `docs/js/extract.js`: infla streams `FlateDecode` com `DecompressionStream` e lê os operadores `Tj`/`TJ` dentro de `BT…ET`. Sem CDN, sem worker, sem dependência. |
-| **Word** | `.docx` `.docm` `.dotx` `.dotm` `.doc` (97-2003) `.rtf` | `word/document.xml` + cabeçalhos, rodapés, notas e comentários; `.doc` pela piece table (`CLX`/`PlcPcd`); RTF por controle `\uN`/`\'xx`. |
-| **Excel** | `.xlsx` `.xlsm` `.xltx` `.xltm` `.xlsb` `.xls` (97-2003) `.ods` | Planilhas com nome e colunas em tabulação, `sharedStrings.xml`, fórmulas e números; `.xls` por records BIFF8 (`SST`, `LABELSST`, `RK`, `MULRK`); `.xlsb` por varredura UTF-16LE nos `.bin`. |
-| **PowerPoint** | `.pptx` `.pptm` `.potx` `.potm` `.ppsx` `.ppsm` `.ppt` (97-2003) `.odp` | Slides em ordem numérica (`slide2` antes de `slide10`), `<a:t>` e notas dos slides; `.ppt` pelos atoms `TextCharsAtom`/`TextBytesAtom`, sem os textos-modelo do slide master. |
-| **Outros** | `.odt` `.odg` `.odf` `.msg` (Outlook) e ZIPs XML | `.msg` lê assunto/de/para/corpo; qualquer ZIP com XML passa por um extrator genérico. |
+| **Word** — `.docx` `.docm` `.dotx` `.dotm` `.doc` `.rtf` | `word/document.xml` + cabeçalhos, rodapés, notas e comentários; `.doc` pela piece table (`CLX`/`PlcPcd`); RTF por `\uN`/`\'xx`. |
+| **Excel** — `.xlsx` `.xlsm` `.xltx` `.xltm` `.xlsb` `.xls` `.ods` | Planilhas com nome e colunas em tabulação, `sharedStrings.xml`, fórmulas e números; `.xls` por BIFF8 (`SST`, `LABELSST`, `RK`, `MULRK`); `.xlsb` por varredura UTF-16LE. |
+| **PowerPoint** — `.pptx` `.pptm` `.potx` `.ppsx` `.ppt` `.odp` | Slides em ordem numérica (`slide2` antes de `slide10`), `<a:t>` e notas; `.ppt` pelos atoms `TextCharsAtom`/`TextBytesAtom`, sem os textos-modelo do slide master. |
+| **Outros** — `.odt` `.odg` `.odf` `.msg` e ZIPs XML | `.msg` lê assunto/de/para/corpo; qualquer ZIP com XML passa por um extrator genérico. |
+
+#### Análise de vídeo, fotos e planilhas
+
+**Vídeo** — não existe ffmpeg nem transcodificação: o app cria um *blob URL* (sem
+carregar 1 GiB em memória), abre num `<video>`, lê `duration`/`videoWidth`/`videoHeight`
+e busca 3 instantes com `currentTime`, desenhando cada um num `<canvas>` de até 768 px.
+O prompt deixa explícito ao modelo que são **amostras**, não o vídeo completo, e
+proíbe afirmar cenas/áudio que não aparecem nos fotogramas. `docs/js/media.js`.
+
+> ⚠️ **Limite honesto:** é análise **visual por amostragem** — sem áudio, sem
+> transcrição, sem movimento contínuo e sem OCR de legendas. Codecs que o navegador
+> não decodifica (MKV, AVI, H.265 em alguns Androids, vídeos protegidos) geram
+> **aviso claro no chip** em vez de erro; converta para MP4/H.264 ou envie capturas
+> PNG/JPG. Fotos e fotogramas **compartilham o teto de 3 imagens** da Groq: 1 foto +
+> 1 vídeo = 2 frames amostrados. O primeiro frame fica salvo no histórico para
+> perguntas de follow-up.
+
+**Fotos** — além do envio ao modelo de visão, agora o prompt recebe as dimensões
+originais e uma instrução direta de análise visual ("descreva, leia textos/números
+visíveis, identifique objetos"). HEIC sem decodificador e imagens abaixo de 32×32
+continuam tratadas sem quebrar a requisição.
+
+**Planilhas** — `docs/js/spreadsheet.js` calcula localmente, a partir do texto
+tabulado, um `[Resumo automático da planilha]` com cabeçalho (só quando a primeira
+linha realmente é um cabeçalho), contagem de linhas/colunas, colunas numéricas com
+soma/média/mín/máx, colunas de texto com valores distintos e mais frequentes, e
+células vazias. Aceita `1.234,56` (BR), `1,234.56` (US), `R$` e `%`. Quando não há
+coluna numérica, o resumo **não inventa totais** e instrui o modelo a não inventar.
 
 #### Formatos legados (OLE2)
 
@@ -181,12 +211,12 @@ Tudo local, sem biblioteca e sem rede.
 > `SampleShow.ppt/.pptx`, `.docm`/`.xlsm`/`.pptm`, `.msg`) e do **xlrd** (`ragged.xls`),
 > incluindo os `.txt` de referência do POI. 17 formatos lidos, 0 avisos.
 
-| **Outros** | Salvos no Storage e listados na bolha, com aviso explícito no chip sugerindo converter para TXT/CSV, PDF com texto, Office ou imagem. |
-
-O prompt ganha uma **instrução explícita de análise** ("ANALISE esse conteúdo… Não diga que
-não tem acesso aos arquivos") e, quando algum arquivo não pôde ser lido, uma ordem de
-**não inventar o conteúdo**. O chip mostra `✓ N caracteres lidos` ou `⚠ sem leitura`, e
-um toast avisa na hora — antes, a falha só aparecia como uma nota invisível dentro do prompt.
+O prompt ganha **instruções explícitas de análise** — uma para o conteúdo textual
+("ANALISE esse conteúdo… Não diga que não tem acesso aos arquivos"), outra para o
+conteúdo visual ("descreva, leia textos e números visíveis, identifique objetos") e
+uma ordem de **não inventar** quando algo não pôde ser lido. O chip mostra
+`✓ N caracteres lidos`, `✓ N fotogramas`, `✓ estatísticas` ou `⚠ ver aviso`, e um
+toast avisa na hora — antes, a falha só aparecia como nota invisível dentro do prompt.
 
 > **Correção (análise de anexos):** a versão anterior importava `pdfjs-dist@4` de
 > `cdn.jsdelivr.net`. O `pdf.worker.mjs` é cross-origin e falha em vários navegadores
@@ -197,10 +227,13 @@ um toast avisa na hora — antes, a falha só aparecia como uma nota invisível 
 > texto — nesse caso envie uma foto/PNG da página para usar a visão do modelo.
 
 Limites (`docs/js/config.js`): **5 arquivos** por mensagem, **1 GiB por arquivo**,
-**3 imagens** por requisição, **20.000 caracteres** extraídos por arquivo
-(arquivos acima de 50 MiB não são lidos no navegador, só salvos). O `buildContent()`
-reparte o teto de 60 mil caracteres entre os anexos para nenhum ser cortado em silêncio.
-O proxy também corta em 3 imagens e 4 MB de base64 por imagem.
+**3 imagens** por requisição — **fotos e fotogramas de vídeo dividem esse teto** —,
+**20.000 caracteres** extraídos por arquivo (arquivos acima de 50 MiB não são lidos no
+navegador, só salvos; **vídeos são exceção**, pois usam `createObjectURL` sem carregar
+o arquivo inteiro). Vídeo: `videoFrameCount: 3`, `videoFrameMaxEdge: 768`,
+`videoTimeoutMs: 12000`. O `buildContent()` reparte o teto de 60 mil caracteres entre
+os anexos para nenhum ser cortado em silêncio. O proxy também corta em 3 imagens e
+4 MB de base64 por imagem.
 
 > **Como chegamos a 1 GiB sem pagar Pro:** o Supabase Free limita cada **objeto** a
 > **50 MiB** (medido: 52.428.800 B → 200; 53.477.376 B → `413 EntityTooLarge`). O app
@@ -435,6 +468,8 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 │       ├── db.js                # cliente PostgREST (conversas e mensagens + anexos)
 │       ├── extract.js           # PDF + OOXML/ODF: infla, ZIP, XML — 100% local
 │       ├── office-legacy.js     # OLE2/CFB: doc/xls/ppt/msg + RTF (sem biblioteca)
+│       ├── media.js             # vídeo: amostragem de frames via <video> + <canvas>
+│       ├── spreadsheet.js       # estatísticas de planilhas (soma, média, distintos)
 │       ├── files.js             # anexos: validação, canvas, TUS, partes, Web Share, prompt
 │       ├── groq.js              # cliente SSE da Edge Function
 │       ├── markdown.js          # renderizador Markdown seguro
@@ -478,6 +513,10 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 | DOCX/XLSX/Office "sem leitura" | Arquivo criptografado, ZIP com método de compressão não suportado, ou navegador sem `DecompressionStream` (anteriores a Chrome 103 / Safari 16.4). Salve como `.txt`/`.csv` ou atualize o navegador |
 | `.doc`/`.xls`/`.ppt` parcial | Formatos OLE2 são "melhor esforço": não interpreta macros, OLE embutido, criptografia nem Word 6/95 incomum. O texto principal é extraído; confira o contador `✓ N caracteres lidos` no chip |
 | `.xlsb` só traz as strings | O formato binário do Excel guarda valores/fórmulas em records `Brt*`; a varredura UTF-16LE recupera os textos, mas não a grade de células |
+| Vídeo sem análise / "⚠ ver aviso" | Codec não decodificado pelo navegador (MKV, AVI, H.265 em alguns Androids), arquivo protegido ou tempo esgotado (12 s). Converta para **MP4/H.264** ou envie capturas PNG/JPG; o arquivo original continua no Storage |
+| Vídeo trouxe menos de 3 frames | Fotos e frames compartilham o limite de **3 imagens** da Groq: com 1 foto anexada, o vídeo amostra 2; com 2 fotos, apenas 1 |
+| Planilha sem resumo estatístico | O extrator só gera estatísticas quando há ≥2 linhas tabulares. Planilhas com apenas textos soltos ou 1 linha não entram no resumo (o conteúdo bruto ainda é enviado) |
+| Resumo da planilha com rótulos errados | Só a **primeira** linha é considerada cabeçalho, e apenas se as linhas seguintes forem majoritariamente numéricas. Sem cabeçalho, as colunas são numeradas — nunca rotulamos dados como nomes de coluna |
 | `Image must have at least 32 pixels` | Não deve ocorrer: `files.js` centraliza imagens pequenas num canvas 32×32 |
 | Imagens ignoradas com GPT-OSS | Esperado: o app e o proxy trocam automaticamente para `qwen/qwen3.8-27b` |
 | Anexo não abre ao clicar | Link assinado expira em 1 h; recarregue a conversa para gerar outro |

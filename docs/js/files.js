@@ -5,6 +5,8 @@
 import { CONFIG, getConfig, getStorageUrl } from "./config.js";
 import { getOwnerKey } from "./db.js";
 import { extractPdfText, extractOfficeText, isOffice } from "./extract.js";
+import { extractVideoFrames, isVideo, formatDuration } from "./media.js";
+import { summarizeSpreadsheet } from "./spreadsheet.js";
 
 function uid() {
   return globalThis.crypto?.randomUUID
@@ -42,6 +44,7 @@ function guessKind(file) {
     return "image";
   }
   if (mime === "application/pdf" || ext === "pdf") return "pdf";
+  if (isVideo(file.name, mime)) return "video";
   if (isOffice(file.name, mime)) return "office";
   if (
     mime.startsWith("text/") ||
@@ -55,7 +58,8 @@ function guessKind(file) {
 
 export function kindLabel(kind) {
   return {
-    image: "imagem", text: "texto", pdf: "PDF", office: "documento", binary: "arquivo",
+    image: "foto", text: "texto", pdf: "PDF", office: "documento",
+    video: "vídeo", binary: "arquivo",
   }[kind] || "arquivo";
 }
 
@@ -82,7 +86,11 @@ function downscaleImage(file, maxEdge) {
         context.fillStyle = "#ffffff";
         context.fillRect(0, 0, width, height);
         context.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
-        resolve(canvas.toDataURL("image/jpeg", 0.82));
+        resolve({
+          dataUrl: canvas.toDataURL("image/jpeg", 0.82),
+          width: image.naturalWidth,
+          height: image.naturalHeight,
+        });
       } catch (error) {
         reject(error);
       } finally {
@@ -106,7 +114,8 @@ export async function processFiles(fileList, existing = []) {
   const warnings = [];
   const attachments = [];
   const incoming = Array.from(fileList || []);
-  let imageCount = existing.filter((item) => item.kind === "image").length;
+  const visualsOf = (item) => (item.kind === "image" ? 1 : item.frames?.length || 0);
+  let imageCount = existing.reduce((n, item) => n + visualsOf(item), 0);
 
   for (const file of incoming) {
     if (existing.length + attachments.length >= config.maxFilesPerMessage) {
@@ -122,8 +131,11 @@ export async function processFiles(fileList, existing = []) {
       continue;
     }
     const kind = guessKind(file);
-    if (kind === "image" && imageCount >= config.maxImagesPerMessage) {
-      warnings.push(`${file.name}: máximo de ${config.maxImagesPerMessage} imagens por mensagem.`);
+    if ((kind === "image" || kind === "video") && imageCount >= config.maxImagesPerMessage) {
+      warnings.push(
+        `${file.name}: máximo de ${config.maxImagesPerMessage} imagens/frames por mensagem ` +
+        "(a Groq aceita 3 por requisição).",
+      );
       continue;
     }
 
@@ -137,16 +149,45 @@ export async function processFiles(fileList, existing = []) {
     };
 
     try {
-      if (file.size > config.maxProcessBytes) {
+      if (kind === "video") {
+        // createObjectURL NÃO carrega o arquivo inteiro na memória, então vídeos
+        // grandes também podem gerar frames (diferente de PDF/Office, que usam
+        // arrayBuffer e por isso respeitam maxProcessBytes).
+        const free = Math.max(1, config.maxImagesPerMessage - imageCount);
+        const result = await extractVideoFrames(file, {
+          count: Math.min(free, config.videoFrameCount),
+          maxEdge: config.videoFrameMaxEdge,
+          timeoutMs: config.videoTimeoutMs,
+        });
+        item.frames = result.frames;
+        item.times = result.times;
+        item.videoMeta = {
+          duration: result.duration,
+          width: result.width,
+          height: result.height,
+        };
+        if (result.frames.length) {
+          item.dataUrl = result.frames[0]; // miniatura no chip e no histórico
+          item.preview = item.dataUrl;
+          item.frameCount = result.frames.length;
+          item.visual = true;
+          imageCount += result.frames.length;
+        }
+        if (result.warning) item.note = result.warning;
+      } else if (file.size > config.maxProcessBytes) {
         // Evita carregar 1 GiB na memoria do navegador so para extrair texto.
         item.note = `Arquivo grande (${formatBytes(file.size)}): salvo por partes, sem leitura no navegador.`;
       } else if (kind === "image") {
-        item.dataUrl = await downscaleImage(file, config.imageMaxEdge);
-        item.preview = item.dataUrl;
+        const image = await downscaleImage(file, config.imageMaxEdge);
+        item.dataUrl = image.dataUrl;
+        item.preview = image.dataUrl;
+        item.imageMeta = { width: image.width, height: image.height };
+        item.visual = true;
         imageCount += 1;
       } else if (kind === "text") {
         item.text = (await file.text()).slice(0, config.maxExtractChars);
         item.extracted = item.text.length;
+        item.summary = summarizeSpreadsheet(item.text);
       } else if (kind === "pdf" || kind === "office") {
         // Extratores nativos (DecompressionStream + parser de streams/ZIP),
         // sem CDN e sem worker cross-origin.
@@ -162,11 +203,16 @@ export async function processFiles(fileList, existing = []) {
               : "Não deu para ler o texto deste documento. Tente salvar como .txt/.csv ou PDF com texto.";
         } else {
           item.extracted = item.text.length;
+          // Pré-análise estatística: só para planilhas (extensão ou colunas em TAB).
+          const isSheet =
+            /\.(xlsx?|xlsm|xltx|xltm|xlsb|ods|csv|tsv)$/i.test(file.name) ||
+            item.text.includes("\t");
+          if (isSheet) item.summary = summarizeSpreadsheet(item.text);
         }
       } else {
         item.note =
           `Formato .${extension(file.name)} sem leitura de texto. Converta para TXT/CSV, ` +
-          "PDF com texto, DOCX/XLSX ou envie uma imagem para análise visual.";
+          "PDF com texto, DOCX/XLSX ou envie uma imagem/vídeo MP4 para análise visual.";
       }
     } catch (error) {
       // Fotos do iPhone saem como HEIC. O Safari costuma decodificar, mas
@@ -181,6 +227,10 @@ export async function processFiles(fileList, existing = []) {
         item.note =
           "Foto HEIC anexada: este navegador não consegue convertê-la para o modelo. " +
           "Envie como JPEG/PNG para análise visual (o arquivo original continua disponível).";
+      } else if (kind === "video") {
+        item.note =
+          `Não foi possível analisar o vídeo: ${error?.message || error}. ` +
+          "Converta para MP4 (H.264) ou envie capturas PNG/JPG.";
       } else {
         item.note = `Não foi possível processar: ${error?.message || error}`;
       }
@@ -195,13 +245,14 @@ export async function processFiles(fileList, existing = []) {
 /** Monta o content da mensagem: string (texto) ou array OpenAI (texto + imagens). */
 export function buildContent(text, attachments = []) {
   const config = getConfig();
-  const images = attachments.filter((item) => item.kind === "image" && item.dataUrl);
   const readable = attachments.filter((item) => item.text && item.text.trim());
-  const unreadable = attachments.filter((item) => !item.text?.trim() && item.note);
+  const hasVisual = (item) => item.kind === "image" || (item.frames?.length || 0) > 0;
+  const unreadable = attachments.filter(
+    (item) => !item.text?.trim() && !hasVisual(item) && item.note,
+  );
   let composed = String(text || "").trim();
 
-  // Instrução explícita: sem ela o modelo tende a responder "não tenho acesso
-  // ao arquivo" mesmo com o conteúdo colado logo abaixo.
+  // ---------- 1) Instrução para conteúdo textual ----------
   if (readable.length) {
     composed =
       (composed ? `${composed}\n\n` : "") +
@@ -212,9 +263,54 @@ export function buildContent(text, attachments = []) {
     composed = "Analise o(s) arquivo(s) enviado(s).";
   }
 
-  // Reparte o teto de 60 mil caracteres entre os arquivos: sem isso, o 5º
-  // anexo era simplesmente cortado pelo slice() final.
-  const budget = Math.max(4000, 58000 - composed.length - unreadable.length * 300);
+  // ---------- 2) Instrução para conteúdo visual (fotos + frames de vídeo) ----------
+  const visualParts = [];
+  for (const item of attachments) {
+    if (item.kind === "image" && item.dataUrl) {
+      const dim = item.imageMeta ? ` ${item.imageMeta.width}×${item.imageMeta.height}` : "";
+      visualParts.push({ label: `Foto: ${item.name}${dim}`, url: item.dataUrl });
+    } else if (item.kind === "video" && item.frames?.length) {
+      item.frames.forEach((url, index) => {
+        const t = item.times?.[index];
+        visualParts.push({
+          label:
+            `Fotograma ${index + 1}/${item.frames.length} do vídeo ${item.name}` +
+            (t != null ? ` em ${formatDuration(t)}` : ""),
+          url,
+        });
+      });
+    }
+  }
+  // A Groq aceita no máximo 3 imagens por requisição — fotos e frames dividem
+  // o mesmo orçamento.
+  const chosen = visualParts.slice(0, config.maxImagesPerMessage);
+  if (chosen.length) {
+    composed +=
+      `\n\nO usuário anexou ${chosen.length} imagem(ns)/fotograma(s) de vídeo mais adiante nesta mensagem. ` +
+      "ANALISE O CONTEÚDO VISUAL: descreva o que aparece, leia textos, placas, números e gráficos visíveis, " +
+      "identifique objetos, pessoas e cenas, e responda com base no que você vê. " +
+      "Não diga que não consegue ver as imagens.\n" +
+      chosen.map((part, index) => `[Imagem ${index + 1}: ${part.label}]`).join("\n");
+  }
+
+  // ---------- 3) Metadados e limites honestos dos vídeos ----------
+  for (const item of attachments.filter((a) => a.kind === "video" && a.frames?.length)) {
+    const meta = item.videoMeta || {};
+    const times = (item.times || []).map(formatDuration).join(", ");
+    composed +=
+      `\n\n--- Vídeo: ${item.name} (${formatDuration(meta.duration)}, ` +
+      `${meta.width}×${meta.height}, ${item.frames.length} fotogramas` +
+      `${times ? ` em ${times}` : ""}) ---\n` +
+      "Os fotogramas são AMOSTRAS em instantes diferentes, não o vídeo completo: " +
+      "não há áudio nem movimento contínuo. Não afirme ter visto cenas que não aparecem neles.";
+  }
+
+  // ---------- 4) Conteúdo extraído + resumo estatístico da planilha ----------
+  const summaries = readable.reduce((n, item) => n + (item.summary?.length || 0), 0);
+  const budget = Math.max(
+    4000,
+    58000 - composed.length - summaries - unreadable.length * 300,
+  );
   const perFile = Math.max(1500, Math.floor(budget / Math.max(1, readable.length)));
   for (const item of readable) {
     const body = item.text.trim();
@@ -222,6 +318,7 @@ export function buildContent(text, attachments = []) {
     composed +=
       `\n\n--- Arquivo: ${item.name} (${body.length} caracteres lidos` +
       `${clipped ? `, trecho de ${perFile}` : ""}) ---\n` +
+      (item.summary ? `${item.summary}\n\n` : "") +
       `${body.slice(0, perFile)}${clipped ? "\n[… trecho restante omitido]" : ""}` +
       "\n--- Fim do arquivo ---";
   }
@@ -233,12 +330,10 @@ export function buildContent(text, attachments = []) {
   }
   composed = composed.slice(0, 60000);
 
-  if (!images.length) return composed;
+  if (!chosen.length) return composed;
   return [
     { type: "text", text: composed },
-    ...images
-      .slice(0, config.maxImagesPerMessage)
-      .map((item) => ({ type: "image_url", image_url: { url: item.dataUrl } })),
+    ...chosen.map((part) => ({ type: "image_url", image_url: { url: part.url } })),
   ];
 }
 
@@ -256,7 +351,11 @@ export function textFromContent(content) {
 /** Reconstrói o payload multimodal ao reler uma mensagem do histórico. */
 export function messageToPayload(row) {
   const attachments = Array.isArray(row.attachments) ? row.attachments : [];
-  const images = attachments.filter((item) => item?.kind === "image" && item.dataUrl);
+  // Fotos e o primeiro fotograma de cada vídeo ficam no histórico: perguntas
+  // de follow-up continuam tendo contexto visual.
+  const images = attachments.filter(
+    (item) => ["image", "video"].includes(item?.kind) && item.dataUrl,
+  );
   if (!images.length) return row.content || "";
   return [
     { type: "text", text: row.content || "" },
@@ -276,8 +375,17 @@ function attachmentMetadata(item, path, parts) {
   if (parts && parts.length) meta.parts = parts;
   if (item.note) meta.note = item.note;
   if (item.extracted) meta.extracted = item.extracted;
-  // Cópia reduzida da imagem no jsonb mantém o contexto em perguntas de follow-up.
-  if (item.kind === "image" && item.dataUrl && item.dataUrl.length <= 600000) {
+  if (item.summary) meta.summary = item.summary;
+  if (item.imageMeta) meta.imageMeta = item.imageMeta;
+  if (item.videoMeta) meta.videoMeta = item.videoMeta;
+  if (item.frameCount) meta.frameCount = item.frameCount;
+  // Cópia reduzida (foto ou 1º fotograma) no jsonb mantém o contexto visual
+  // em perguntas de follow-up. Nunca salvamos os 3 frames (evita jsonb gigante).
+  if (
+    ["image", "video"].includes(item.kind) &&
+    item.dataUrl &&
+    item.dataUrl.length <= 600000
+  ) {
     meta.dataUrl = item.dataUrl;
   }
   return meta;

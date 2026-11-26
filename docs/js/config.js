@@ -35,9 +35,12 @@ export const CONFIG = {
   maxProcessBytes: 50 * 1024 * 1024, // acima disso nao lemos PDF/imagem na memoria
   resumableThreshold: 6 * 1024 * 1024, // acima disso, upload TUS em chunks
   uploadChunkBytes: 6 * 1024 * 1024, // tamanho de cada chunk do TUS
-  maxImagesPerMessage: 3, // limite da Groq para qwen/qwen3.8-27b
+  maxImagesPerMessage: 3, // limite da Groq para qwen/qwen3.8-27b (fotos + frames)
   maxExtractChars: 20000, // por arquivo de texto/PDF
-  imageMaxEdge: 1024, // downscale antes de virar base64
+  imageMaxEdge: 1024, // downscale da foto antes de virar base64
+  videoFrameCount: 3, // fotogramas amostrados por vídeo (10% / 50% / 90%)
+  videoFrameMaxEdge: 768, // downscale de cada fotograma
+  videoTimeoutMs: 12000, // tempo máximo para abrir/seek no vídeo
   textExtensions: [
     "txt", "md", "markdown", "json", "jsonl", "csv", "tsv", "log", "xml", "yaml", "yml",
     "html", "htm", "css", "js", "mjs", "cjs", "jsx", "ts", "tsx", "py", "rb", "go", "java",

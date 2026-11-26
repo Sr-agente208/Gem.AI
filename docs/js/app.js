@@ -9,6 +9,7 @@ import {
 import * as db from "./db.js";
 import { fetchModels, streamChat, testGeneration } from "./groq.js";
 import { renderMarkdown, escapeHtml } from "./markdown.js";
+import { formatDuration } from "./media.js";
 import {
   processFiles,
   buildContent,
@@ -145,17 +146,25 @@ function attachmentChip(meta, removable = false) {
   const name = escapeHtml(meta.name || "arquivo");
   const note = meta.note ? escapeHtml(meta.note) : "";
   const status = note
-    ? " · ⚠ sem leitura"
-    : meta.extracted
-      ? ` · ✓ ${meta.extracted} caracteres lidos`
-      : "";
+    ? " · ⚠ ver aviso"
+    : meta.frameCount
+      ? ` · ✓ ${meta.frameCount} fotogramas` +
+        (meta.videoMeta?.duration ? ` · ${formatDuration(meta.videoMeta.duration)}` : "")
+      : meta.summary
+        ? ` · ✓ ${meta.extracted ?? 0} caracteres + estatísticas`
+        : meta.extracted
+          ? ` · ✓ ${meta.extracted} caracteres lidos`
+          : ["image", "video"].includes(meta.kind)
+            ? " · ✓ pronto para visão"
+            : "";
   const sub = `${formatBytes(meta.size)} · ${kindLabel(meta.kind)}${status}`;
   const icon =
+    meta.kind === "video" ? "🎬" :
     meta.kind === "pdf" ? "📕" :
     meta.kind === "office" ? "📊" :
     meta.kind === "text" ? "📄" : "📎";
   const preview =
-    meta.kind === "image" && meta.dataUrl
+    ["image", "video"].includes(meta.kind) && meta.dataUrl
       ? `<img src="${escapeHtml(meta.dataUrl)}" alt="" />`
       : `<span class="file-icon" aria-hidden="true">${icon}</span>`;
 
@@ -189,7 +198,9 @@ function attachmentChip(meta, removable = false) {
 
 function renderBubbleAttachments(attachments) {
   if (!attachments || !attachments.length) return "";
-  const images = attachments.filter((item) => item.kind === "image" && item.dataUrl);
+  const images = attachments.filter(
+    (item) => ["image", "video"].includes(item.kind) && item.dataUrl,
+  );
   const thumbs = images.length
     ? `<div class="bubble-images">${images
         .map(
@@ -230,13 +241,26 @@ async function addFiles(fileList) {
     state.pending.push(...attachments);
     for (const warning of warnings) showToast(warning, "error");
     const read = attachments.filter((item) => item.extracted);
+    const visual = attachments.filter((item) => item.visual);
+    const frames = visual.reduce((n, item) => n + (item.frameCount || 0), 0);
     const unread = attachments.filter((item) => item.note);
-    if (read.length) {
-      showToast(
-        `${read.length} arquivo(s) lido(s): ${read.reduce((n, a) => n + a.extracted, 0)} ` +
-          "caracteres serão enviados ao modelo para análise.",
-        "ok",
-      );
+    const stats = attachments.filter((item) => item.summary).length;
+    if (read.length || visual.length) {
+      const bits = [];
+      if (read.length) {
+        bits.push(
+          `${read.reduce((n, a) => n + a.extracted, 0)} caracteres de ${read.length} arquivo(s)`,
+        );
+      }
+      if (visual.length) {
+        bits.push(
+          frames
+            ? `${frames} fotogramas de vídeo para visão`
+            : `${visual.length} foto(s) para visão`,
+        );
+      }
+      if (stats) bits.push(`estatísticas de ${stats} planilha(s)`);
+      showToast(`Pronto para analisar: ${bits.join(" · ")}.`, "ok");
     } else if (attachments.length) {
       showToast(`${attachments.length} arquivo(s) pronto(s) para enviar.`, "ok");
     }
@@ -618,10 +642,13 @@ function handleSubmit(event) {
   if (!text && !attachments.length) return;
 
   const content = buildContent(text, attachments);
-  const hasImages = attachments.some((item) => item.kind === "image" && item.dataUrl);
+  // Fotos E fotogramas de vídeo exigem o modelo com visão.
+  const hasImages = attachments.some(
+    (item) => item.dataUrl && ["image", "video"].includes(item.kind),
+  );
   const model = hasImages ? getConfig().visionModel : state.settings.model;
   if (hasImages && model !== state.settings.model) {
-    showToast(`Imagens analisadas com ${model} (modelo com visão).`, "ok");
+    showToast(`Imagens/vídeo analisados com ${model} (modelo com visão).`, "ok");
   }
 
   ui.promptInput.value = "";

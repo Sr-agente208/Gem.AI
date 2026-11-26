@@ -239,6 +239,23 @@ function xmlText(xml) {
   return decodeEntities(xml.replace(/<[^>]*>/g, " ")).replace(/[ \t]{2,}/g, " ").trim();
 }
 
+/** ODF: preserva TAB entre células (xmlText colapsaria e perderia as colunas). */
+function odfText(xml) {
+  return decodeEntities(
+    xml
+      .replace(/<table:table-row\b[^>]*>/g, "\n")
+      .replace(/<\/table:table-row>/g, "")
+      .replace(/<table:table-cell\b[^>]*>/g, "\t")
+      .replace(/<\/(?:text:p|text:h)>/g, " ")
+      .replace(/<[^>]*>/g, ""),
+  )
+    .split("\n")
+    .map((line) => line.replace(/ {2,}/g, " ").replace(/^[\t ]+|[\t ]+$/g, ""))
+    .filter((line) => line.replace(/\t/g, "").trim())
+    .join("\n")
+    .trim();
+}
+
 /** Junta os nós <w:t> respeitando parágrafos (<w:p>) e tabulações (<w:tab/>). */
 function docxText(xml) {
   return decodeEntities(
@@ -471,11 +488,7 @@ export async function extractOfficeText(file, maxChars = 20000) {
     if (ODF_ZIP.includes(ext)) {
       const xml = await read("content.xml");
       if (!xml) return "";
-      return xmlText(
-        xml
-          .replace(/<\/(?:text:p|text:h|table:table-row)>/g, "\n")
-          .replace(/<table:table-cell\b[^>]*>/g, "\t"),
-      ).slice(0, maxChars);
+      return odfText(xml).slice(0, maxChars);
     }
     return await genericXmlZip(zip, read, maxChars);
   } catch {
