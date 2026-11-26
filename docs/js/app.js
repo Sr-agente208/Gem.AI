@@ -11,6 +11,7 @@ import { fetchModels, streamChat, testGeneration } from "./groq.js";
 import { renderMarkdown, escapeHtml } from "./markdown.js";
 import { formatDuration } from "./media.js";
 import { initSupport } from "./support-ui.js";
+import { initAuthUI } from "./auth-ui.js";
 import {
   processFiles,
   buildContent,
@@ -917,6 +918,20 @@ function bindEvents() {
   ui.sidebarClose.addEventListener("click", closeSidebar);
   ui.sidebarOverlay.addEventListener("click", closeSidebar);
 
+  // CORREÇÃO (mobile): o backdrop do menu agora tem pointer-events:none, então
+  // ele não engole mais os toques. Fechamos o menu por delegação, em capture,
+  // SEM preventDefault/stopPropagation: um único toque fecha o drawers E aciona
+  // o botão do chat (enviar, anexar, lixeira, modelo, prompts). Antes, com o
+  // menu aberto, esses cliques simplesmente não chegavam ao destino.
+  const closeOnOutside = (event) => {
+    if (!ui.sidebar.classList.contains("open")) return;
+    const target = event.target;
+    if (ui.sidebar.contains(target) || ui.sidebarToggle?.contains(target)) return;
+    closeSidebar();
+  };
+  document.addEventListener("pointerdown", closeOnOutside, true);
+  document.addEventListener("click", closeOnOutside, true);
+
   ui.settingsBtn.addEventListener("click", openSettings);
   ui.settingsClose.addEventListener("click", closeSettings);
   ui.modal.addEventListener("click", (event) => {
@@ -1004,11 +1019,37 @@ function setupMobilePlatform() {
 
 /* ------------------------------ boot ------------------------------ */
 
+/** Após entrar/sair/vincular: recarrega o histórico com a nova identidade RLS. */
+async function reloadAfterAuth() {
+  try {
+    await loadConversations();
+    if (state.conversations.length) await openConversation(state.conversations[0].id);
+    else showEmptyView();
+  } catch (error) {
+    showToast(`Não foi possível recarregar o histórico: ${error?.message || error}`, "error");
+  }
+}
+
 (async function boot() {
+  // 1) Listeners PRIMEIRO: mesmo que um módulo opcional falhe, os botões do
+  //    chat (enviar, anexar, menu, configurações) continuam respondendo.
   bindEvents();
+  // 2) Módulos opcionais são isolados: um erro de diagnóstico/PWA/login não
+  //    pode abortar o boot e deixar a tela "morta".
+  const safe = (label, fn) => {
+    try {
+      const result = fn();
+      if (result && typeof result.catch === "function") {
+        result.catch((error) => console.warn(`Gem.AI: ${label}`, error));
+      }
+    } catch (error) {
+      console.warn(`Gem.AI: ${label}`, error);
+    }
+  };
   // Central de ajuda/chamados: módulo separado para não misturar com o chat.
-  initSupport({ showToast, closeSidebar });
-  setupMobilePlatform();
+  safe("suporte", () => initSupport({ showToast, closeSidebar }));
+  safe("plataforma mobile", () => setupMobilePlatform());
+  safe("login", () => initAuthUI({ showToast, closeSidebar, onSessionChange: reloadAfterAuth }));
   const isTouch = window.matchMedia?.("(hover: none), (pointer: coarse)").matches;
   const sizeHint = formatBytes(getConfig().maxFileBytes);
   ui.composerHint.textContent = isTouch

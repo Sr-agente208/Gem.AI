@@ -7,6 +7,7 @@
 
 import { getConfig, getRestUrl } from "./config.js";
 import { getOwnerKey } from "./db.js";
+import { getAccessToken } from "./auth.js";
 
 export const APP_VERSION = "2026.11.26";
 export const SUPPORT_REPO = "https://github.com/Sr-agente208/Gem.AI";
@@ -31,10 +32,12 @@ export const categoryLabel = (key) => CATEGORY_LABELS[key] || "Outro";
 
 function headers(extra = {}) {
   const cfg = getConfig();
+  const token = getAccessToken();
   return {
     apikey: cfg.supabasePublishableKey,
     "Content-Type": "application/json",
     "x-gem-owner": getOwnerKey(),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...extra,
   };
 }

@@ -101,6 +101,11 @@ export function getRestUrl() {
   return `${getConfig().supabaseUrl.replace(/\/+$/, "")}/rest/v1`;
 }
 
+/** GoTrue (Supabase Auth) via REST — sem SDK, sem CDN, sem build step. */
+export function getAuthUrl() {
+  return `${getConfig().supabaseUrl.replace(/\/+$/, "")}/auth/v1`;
+}
+
 export function getFunctionUrl() {
   const cfg = getConfig();
   return `${cfg.supabaseUrl.replace(/\/+$/, "")}/functions/v1/${cfg.functionName}`;

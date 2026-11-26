@@ -49,6 +49,14 @@
       <div id="conversationList" class="conversation-list" role="list"></div>
 
       <div class="sidebar-foot">
+        <button id="accountBtn" class="account-card" type="button" aria-label="Entrar ou criar conta">
+          <span id="accountAvatar" class="account-avatar" aria-hidden="true">✦</span>
+          <span class="account-copy">
+            <b id="accountName">Entrar / Criar conta</b>
+            <small id="accountDetail">Histórico só neste navegador</small>
+          </span>
+          <span class="account-chevron" aria-hidden="true">›</span>
+        </button>
         <div class="status-row">
           <span id="statusDot" class="status-dot"></span>
           <span id="statusText">Conectando…</span>
@@ -127,6 +135,97 @@
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <!-- Login / conta: Supabase Auth (e-mail+senha) + OAuth social. Opcional:
+         sem sessão o app continua funcionando no modo anônimo de sempre. -->
+    <div id="loginModal" class="modal-backdrop" hidden>
+      <div class="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+        <div class="modal-head">
+          <div>
+            <h2 id="authTitle">Entrar no Gem.AI</h2>
+            <p id="authSubtitle">Seu histórico fica vinculado à sua conta em qualquer dispositivo.</p>
+          </div>
+          <button id="loginClose" class="icon-btn" type="button" aria-label="Fechar">✕</button>
+        </div>
+
+        <div class="modal-body auth-body">
+          <div id="authTabs" class="auth-tabs" role="tablist" aria-label="Opções de acesso">
+            <button type="button" role="tab" data-auth-tab="login" aria-selected="true">Entrar</button>
+            <button type="button" role="tab" data-auth-tab="signup" aria-selected="false">Criar conta</button>
+            <button type="button" role="tab" data-auth-tab="recover" aria-selected="false">Esqueci a senha</button>
+          </div>
+
+          <div id="authMessage" class="auth-message" role="status" aria-live="polite" hidden></div>
+
+          <form id="authLoginForm" class="auth-form" autocomplete="on">
+            <label class="field"><span>E-mail</span>
+              <input id="authLoginEmail" type="email" autocomplete="email" required placeholder="voce@exemplo.com" />
+            </label>
+            <label class="field"><span>Senha</span>
+              <input id="authLoginPassword" type="password" autocomplete="current-password" required placeholder="••••••" />
+            </label>
+            <button id="authLoginSubmit" class="primary-btn" type="submit">Entrar</button>
+          </form>
+
+          <form id="authSignupForm" class="auth-form" autocomplete="on" hidden>
+            <label class="field"><span>Nome</span>
+              <input id="authSignupName" type="text" autocomplete="name" required placeholder="Como podemos te chamar?" />
+            </label>
+            <label class="field"><span>E-mail</span>
+              <input id="authSignupEmail" type="email" autocomplete="email" required placeholder="voce@exemplo.com" />
+            </label>
+            <label class="field"><span>Senha (mínimo 6 caracteres)</span>
+              <input id="authSignupPassword" type="password" autocomplete="new-password" minlength="6" required placeholder="••••••" />
+            </label>
+            <label class="field"><span>Confirmar senha</span>
+              <input id="authSignupPassword2" type="password" autocomplete="new-password" minlength="6" required placeholder="••••••" />
+            </label>
+            <button id="authSignupSubmit" class="primary-btn" type="submit">Criar conta</button>
+          </form>
+
+          <form id="authRecoverForm" class="auth-form" hidden>
+            <label class="field"><span>E-mail da conta</span>
+              <input id="authRecoverEmail" type="email" autocomplete="email" required placeholder="voce@exemplo.com" />
+            </label>
+            <button id="authRecoverSubmit" class="primary-btn" type="submit">Enviar link de redefinição</button>
+          </form>
+
+          <form id="authNewPasswordForm" class="auth-form" hidden>
+            <label class="field"><span>Nova senha</span>
+              <input id="authNewPassword" type="password" autocomplete="new-password" minlength="6" required />
+            </label>
+            <label class="field"><span>Confirmar nova senha</span>
+              <input id="authNewPassword2" type="password" autocomplete="new-password" minlength="6" required />
+            </label>
+            <button id="authNewPasswordSubmit" class="primary-btn" type="submit">Salvar nova senha</button>
+          </form>
+
+          <section id="authAccount" class="auth-account" hidden></section>
+
+          <div id="authSocial" class="auth-social">
+            <div class="auth-divider"><span>ou continue com</span></div>
+            <div class="auth-social-row">
+              <button id="authGoogle" class="ghost-btn" type="button" data-provider="google">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.2c0-.7-.06-1.3-.18-1.9H12v3.7h5.1a4.4 4.4 0 0 1-1.9 2.9v2.4h3.1c1.8-1.7 2.7-4.1 2.7-7.1Z"/><path d="M12 21.5c2.6 0 4.8-.9 6.3-2.3l-3.1-2.4c-.8.6-1.9.9-3.2.9-2.5 0-4.6-1.7-5.4-3.9H3.4v2.5A9.5 9.5 0 0 0 12 21.5Z"/><path d="M6.6 13.8a5.7 5.7 0 0 1 0-3.6V7.7H3.4a9.5 9.5 0 0 0 0 8.6l3.2-2.5Z"/><path d="M12 6.3c1.4 0 2.7.5 3.7 1.4l2.8-2.8A9.3 9.3 0 0 0 12 2.5a9.5 9.5 0 0 0-8.6 5.2l3.2 2.5C7.4 8 9.5 6.3 12 6.3Z"/></svg>
+                Google
+              </button>
+              <button id="authGithub" class="ghost-btn" type="button" data-provider="github">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.9c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.6 1 1.6 1 .9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.7-1.4-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.7 1a9.4 9.4 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A10 10 0 0 0 12 2Z"/></svg>
+                GitHub
+              </button>
+            </div>
+            <p class="auth-note">
+              O login social exige habilitar o provedor no painel do Supabase
+              (Authentication → Providers). Instruções em <b>LOGIN.md</b>.
+            </p>
+          </div>
+        </div>
+
+        <div class="modal-foot">
+          <span class="support-foot-note">Supabase Auth · sem senha no front · modo anônimo preservado</span>
+        </div>
+      </div>
+    </div>
 
     <div id="settingsModal" class="modal-backdrop" hidden>
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">

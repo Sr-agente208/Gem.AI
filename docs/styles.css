@@ -38,6 +38,17 @@ body {
 
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
+/* Mobile: remove o atraso de 300 ms do toque e dá feedback imediato. Sem isto
+   um toque rápido parecia "não funcionar" no iOS/Android. */
+button, [role="button"], .foot-btn, .icon-btn, .new-chat-btn {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(124, 108, 255, .28);
+  user-select: none;
+}
+button:active:not(:disabled), [role="button"]:active:not([aria-disabled="true"]) {
+  transform: scale(.97);
+  filter: brightness(1.15);
+}
 svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .only-mobile { display: none; }
 
@@ -392,8 +403,17 @@ html.keyboard-open .composer-hint { display: none; }
   .only-mobile { display: grid; }
   .sidebar { position: fixed; inset: 0 auto 0 0; transform: translateX(-100%); transition: transform .22s ease; box-shadow: var(--shadow); }
   .sidebar.open { transform: none; }
-  .sidebar-overlay { display: block; position: fixed; inset: 0; z-index: 25; background: rgba(0,0,0,.55); opacity: 0; pointer-events: none; transition: opacity .22s; }
-  .sidebar-overlay.show { opacity: 1; pointer-events: auto; }
+  /* CORREÇÃO: o backdrop escurece, mas NUNCA intercepta toques. Se ele tivesse
+     pointer-events:auto, com o menu aberto nenhum botão do chat (enviar, anexar,
+     lixeira, modelo) respondia no celular — era o "os botões não funcionam".
+     O fechamento do menu agora é feito por delegação em app.js, sem bloquear o
+     clique: um toque fecha o menu E aciona o botão na mesma interação. */
+  .sidebar-overlay {
+    display: block; position: fixed; inset: 0; z-index: 25;
+    background: rgba(0,0,0,.55); opacity: 0; pointer-events: none;
+    transition: opacity .22s;
+  }
+  .sidebar-overlay.show { opacity: 1; pointer-events: none; }
   .chat-header {
     height: calc(60px + env(safe-area-inset-top, 0px));
     flex-basis: calc(60px + env(safe-area-inset-top, 0px));
@@ -422,3 +442,60 @@ html.keyboard-open .composer-hint { display: none; }
   .conv-delete { width: 36px; height: 36px; flex-basis: 36px; font-size: 16px; }
   .composer-hint { font-size: 10.5px; padding: 0 4px; }
 }
+
+/* ---------- Login / conta ---------- */
+.modal-backdrop[hidden] { pointer-events: none; visibility: hidden; }
+.account-card {
+  width: 100%; min-height: 56px; display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; margin-bottom: 10px; text-align: left;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--panel); color: var(--text);
+}
+.account-card:hover { border-color: var(--accent-2); background: var(--panel-2); }
+.account-card.signed-in { border-color: rgba(124,108,255,.45); background: var(--accent-soft); }
+.account-avatar {
+  flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--accent), #5b8cff); color: #fff;
+  font-size: 15px; font-weight: 700;
+}
+.account-avatar.big { width: 48px; height: 48px; border-radius: 14px; font-size: 20px; }
+.account-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.account-copy b { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.account-copy small { font-size: 10.5px; color: var(--muted-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.account-chevron { flex: none; color: var(--muted-2); font-size: 19px; }
+
+.auth-modal { width: min(470px, 100%); }
+.auth-body { gap: 14px; }
+.auth-tabs { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-soft); }
+.auth-tabs button {
+  flex: 1; min-height: 38px; padding: 6px 8px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--muted); font-size: 12.5px;
+}
+.auth-tabs button[aria-selected="true"] { background: var(--accent-soft); color: #d6d0ff; font-weight: 600; }
+.auth-tabs button[hidden] { display: none !important; }
+.auth-form { display: flex; flex-direction: column; gap: 12px; }
+.auth-form[hidden], .auth-account[hidden], .auth-social[hidden] { display: none !important; }
+.auth-form .primary-btn { min-height: 44px; }
+.auth-message {
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+  font-size: 12.5px; line-height: 1.5; background: var(--panel-2); color: var(--muted);
+}
+.auth-message[hidden] { display: none !important; }
+.auth-message.ok { color: #c6f5e2; border-color: rgba(52,211,153,.45); }
+.auth-message.bad { color: #ffd1d1; border-color: rgba(248,113,113,.45); }
+.auth-note { margin: 0; font-size: 11px; line-height: 1.55; color: var(--muted-2); }
+.auth-divider { display: flex; align-items: center; gap: 10px; color: var(--muted-2); font-size: 11px; }
+.auth-divider::before, .auth-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.auth-social { display: flex; flex-direction: column; gap: 10px; }
+.auth-social-row { display: flex; gap: 8px; }
+.auth-social-row .ghost-btn {
+  flex: 1; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.auth-social-row svg { width: 17px; height: 17px; fill: currentColor; stroke: none; }
+.auth-account { display: flex; flex-direction: column; gap: 12px; }
+.account-profile { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg-soft); }
+.account-profile > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.account-profile b { font-size: 14px; }
+.account-profile small { font-size: 11.5px; color: var(--muted-2); overflow-wrap: anywhere; }
+.auth-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.auth-actions .ghost-btn { flex: 1 1 45%; min-height: 42px; }

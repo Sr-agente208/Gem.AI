@@ -4,6 +4,7 @@
 // ao modelo apenas o que ele consegue entender.
 import { CONFIG, getConfig, getStorageUrl } from "./config.js";
 import { getOwnerKey } from "./db.js";
+import { getAccessToken } from "./auth.js";
 import { extractPdfText, extractOfficeText, isOffice } from "./extract.js";
 import { extractVideoFrames, isVideo, formatDuration } from "./media.js";
 import { summarizeSpreadsheet } from "./spreadsheet.js";
@@ -393,9 +394,11 @@ function attachmentMetadata(item, path, parts) {
 
 function storageHeaders(extra = {}) {
   const config = getConfig();
+  const token = getAccessToken();
   return {
     apikey: config.supabasePublishableKey,
     "x-gem-owner": getOwnerKey(),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...extra,
   };
 }

@@ -1,5 +1,6 @@
 // Gem.AI · cliente mínimo do Supabase via PostgREST (sem SDK, sem build step)
 import { getConfig, getRestUrl } from "./config.js";
+import { getAccessToken } from "./auth.js";
 
 const OWNER_KEY = "gem.owner";
 
@@ -25,10 +26,15 @@ function baseHeaders(extra = {}) {
   const cfg = getConfig();
   // Chaves sb_publishable_ vão SOMENTE no header `apikey`.
   // Em `Authorization: Bearer` a plataforma tenta decodificar um JWT e rejeita.
+  // Com sessão, o PostgREST troca o role para `authenticated` e auth.uid()
+  // passa a valer nas policies. Sem sessão, continua 100% anônimo (apikey +
+  // x-gem-owner), sem nenhuma mudança de comportamento.
+  const token = getAccessToken();
   return {
     apikey: cfg.supabasePublishableKey,
     "Content-Type": "application/json",
     "x-gem-owner": getOwnerKey(),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...extra,
   };
 }

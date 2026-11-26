@@ -55,6 +55,8 @@ direto para o Storage e apenas o texto/imagem processados no navegador vão ao m
 | Migration `gem_ai_files_limit` | ✅ aplicada (bucket com teto de 1 GiB; quem limita hoje é o plano) |
 | Migration `gem_ai_support` | ✅ aplicada (FAQ + chamados + mensagens, 3 políticas RLS, 3 RPCs, trigger de status) |
 | **Add-in do Office** | ✅ painel de tarefas Word/Excel/PowerPoint + manifesto XML + sideload documentado |
+| **Login / contas** | ✅ tela Entrar · Criar conta · Recuperar senha · Minha conta (Supabase Auth) + botões Google/GitHub e e-mails personalizados |
+| **Botões no mobile** | ✅ backdrop do menu não intercepta mais toques; um clique fecha o menu **e** aciona o botão |
 | Limite por arquivo | ✅ **1 GiB** por arquivo lógico, dividido em partes de 48 MiB (teto por objeto do Free: 50 MiB) |
 | Edge Function `gem-chat` | ✅ ativa, **v10**, `verify_jwt = false`, multimodal + diagnósticos |
 | `GROQ_API_KEY` | ✅ gravada como **secret** no Supabase (não está em nenhum arquivo) |
@@ -431,6 +433,31 @@ status, troubleshooting): **[SUPORTE.md](SUPORTE.md)**.
 
 ---
 
+---
+
+## Login e contas ✅
+
+ Tela de **Entrar / Criar conta / Esqueci a senha / Minha conta** no cartão da
+ sidebar, com **Supabase Auth real** (e-mail + senha) e botões **Google/GitHub**.
+ Guia completo: **[LOGIN.md](LOGIN.md)**.
+
+| | |
+| --- | --- |
+| **Modo anônimo** | Continua igual: sem conta, `apikey` + `x-gem-owner`, nenhum cadastro exigido |
+| **Com conta** | `Authorization: Bearer <JWT>` no REST/Storage → RLS por `auth.uid()`; histórico, anexos e chamados aparecem em outros dispositivos |
+| **Vínculo** | `gem_owner_links` + RPC `gem_link_current_owner()`; o `owner_key` do navegador **não muda**, então nenhum anexo/TUS/URL assinada quebra |
+| **E-mails** | Templates PT-BR prontos em `supabase/email-templates/` (assuntos + 4 HTML com `{{ .Data.full_name }}`), para colar em Authentication → Email Templates |
+| **Zero dependências** | GoTrue via REST em `docs/js/auth.js`; sem supabase-js, sem CDN, sem build. Function `gem-chat` v10 intacta |
+
+> Config já aplicada por API: `site_url` = Pages, `uri_allow_list` com Pages +
+> `*.e2b.app`, `mailer_autoconfirm=true` (plano Free tem ~2 e-mails/hora e sem
+> SMTP — assim o login funciona na hora). Para produção, configure SMTP e
+> desligue o auto-confirm; **recuperação de senha já envia e-mail**.
+> **Login social** exige habilitar Google/GitHub no painel (Client ID/Secret) —
+> o conector não expõe essa escrita e nenhuma credencial foi inventada.
+
+---
+
 ## Add-in do Office (Office.js) ✅
 
  Um suplemento de **painel de tarefas** lê o **documento aberto** no Word, Excel
@@ -536,8 +563,10 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 ```
 .
 ├── README.md
+├── LOGIN.md                    # login, templates de e-mail, OAuth, RLS, limites
 ├── OFFICE-ADDIN.md             # Add-in do Office: APIs, manifesto, sideload, limites
-├── SUPORTE.md                   # runbook da equipe de suporte (SQL de resposta, status, FAQ)
+├── SUPORTE.md
+├── supabase/email-templates/   # assuntos.md + 4 HTML PT-BR prontos para colar                   # runbook da equipe de suporte (SQL de resposta, status, FAQ)
 ├── .github/ISSUE_TEMPLATE/      # formulário de issue + links de contato
 ├── .env.example                 # referência de variáveis (nada de segredo aqui)
 ├── .gitignore
@@ -557,6 +586,8 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 │   │   ├── taskpane.js
 │   │   └── icons/               # icon-16/32/64/80.png exigidos pelo manifesto
 │   └── js/
+│       ├── auth.js             # GoTrue REST (sem SDK): sessão, refresh, OAuth
+│       ├── auth-ui.js          # modal de login + cartão de conta
 │       ├── config.js            # URL + publishable key + token + modelos + limites de arquivo
 │       ├── db.js                # cliente PostgREST (conversas e mensagens + anexos)
 │       ├── extract.js           # PDF + OOXML/ODF: infla, ZIP, XML — 100% local
@@ -622,4 +653,7 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 | Add-in mostra "Office.js não carregou" | CDN da Microsoft bloqueada por firewall/proxy/extensão; `Office.onReady()` nunca resolve. O `onerror` tenta a CDN clássica e o timeout de 12 s avisa. O chat continua 100% local |
 | Add-in não lê o PowerPoint inteiro | `PowerPointApi 1.4` ausente nessa versão: o painel usa só a seleção e avisa. Atualize o Office ou selecione as formas |
 | `Token de acesso inválido` no painel | Configure `GEM_CHAT_TOKEN` nas Configurações do **chat** (mesma origem, mesmo `localStorage`) |
+| Botões do chat não respondem no celular com o menu aberto | Corrigido: o backdrop do menu agora tem `pointer-events:none` e o fechamento é por delegação, sem bloquear o clique |
+| Botões Google/GitHub dão erro | Provedor não habilitado no Supabase → Authentication → Providers (veja [LOGIN.md](LOGIN.md)) |
+| Histórico sumiu ao entrar | Abra **Minha conta → Vincular este navegador**; o `owner_key` local não é alterado |
 | Página 404 no Pages | Branch/folder errados, repositório privado em plano Free, ou build ainda rodando (~30 s) |
