@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Gem.AI · manifesto somente-do-suplemento (XML), formato exigido para sideload
+  em Word / Excel / PowerPoint. Adaptado do manifesto de referência
+  OfficeDev/Office-Add-in-samples (Samples/hello-world/word-hello-world).
+
+  Não é publicado no Marketplace. Para instalar, baixe ESTE arquivo e use
+  "Fazer upload do meu suplemento" (Office na Web) ou um catálogo de pasta
+  compartilhada / sideload do Office desktop. Veja OFFICE-ADDIN.md.
+-->
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+  xsi:type="TaskPaneApp">
+  <Id>351097E5-FD29-4849-A2DF-FBEE6D780D3D</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>Gem.AI</ProviderName>
+  <DefaultLocale>pt-BR</DefaultLocale>
+  <DisplayName DefaultValue="Gem.AI · Analisar documento" />
+  <Description DefaultValue="Lê o documento, a pasta de trabalho ou a apresentação aberta e analisa o conteúdo com IA (Groq) pelo proxy do Supabase." />
+  <IconUrl DefaultValue="https://sr-agente208.github.io/Gem.AI/office/icons/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://sr-agente208.github.io/Gem.AI/office/icons/icon-64.png" />
+  <SupportUrl DefaultValue="https://github.com/Sr-agente208/Gem.AI/blob/arena/e947b2eb-gem-ai/OFFICE-ADDIN.md" />
+  <AppDomains>
+    <AppDomain>https://sr-agente208.github.io</AppDomain>
+    <AppDomain>https://jikizafsbrclkfgoccha.supabase.co</AppDomain>
+    <AppDomain>https://officeapis.public.onecdn.static.microsoft</AppDomain>
+    <AppDomain>https://appsforoffice.microsoft.com</AppDomain>
+  </AppDomains>
+  <Hosts>
+    <Host Name="Document" />
+    <Host Name="Workbook" />
+    <Host Name="Presentation" />
+  </Hosts>
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://sr-agente208.github.io/Gem.AI/office/taskpane.html" />
+  </DefaultSettings>
+  <Permissions>ReadWriteDocument</Permissions>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="Document">
+        <DesktopFormFactor>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="Gem.Group.Word">
+                <Label resid="Gem.GroupLabel" />
+                <Icon>
+                  <bt:Image size="16" resid="Gem.Icon16" />
+                  <bt:Image size="32" resid="Gem.Icon32" />
+                  <bt:Image size="80" resid="Gem.Icon80" />
+                </Icon>
+                <Control xsi:type="Button" id="Gem.Button.Word">
+                  <Label resid="Gem.ButtonLabel" />
+                  <Supertip>
+                    <Title resid="Gem.ButtonTitle" />
+                    <Description resid="Gem.ButtonTip" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Gem.Icon16" />
+                    <bt:Image size="32" resid="Gem.Icon32" />
+                    <bt:Image size="80" resid="Gem.Icon80" />
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>Gem.Pane.Word</TaskpaneId>
+                    <SourceLocation resid="Gem.TaskpaneUrl" />
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+
+      <Host xsi:type="Workbook">
+        <DesktopFormFactor>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="Gem.Group.Excel">
+                <Label resid="Gem.GroupLabel" />
+                <Icon>
+                  <bt:Image size="16" resid="Gem.Icon16" />
+                  <bt:Image size="32" resid="Gem.Icon32" />
+                  <bt:Image size="80" resid="Gem.Icon80" />
+                </Icon>
+                <Control xsi:type="Button" id="Gem.Button.Excel">
+                  <Label resid="Gem.ButtonLabel" />
+                  <Supertip>
+                    <Title resid="Gem.ButtonTitle" />
+                    <Description resid="Gem.ButtonTip" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Gem.Icon16" />
+                    <bt:Image size="32" resid="Gem.Icon32" />
+                    <bt:Image size="80" resid="Gem.Icon80" />
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>Gem.Pane.Excel</TaskpaneId>
+                    <SourceLocation resid="Gem.TaskpaneUrl" />
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+
+      <Host xsi:type="Presentation">
+        <DesktopFormFactor>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="Gem.Group.PowerPoint">
+                <Label resid="Gem.GroupLabel" />
+                <Icon>
+                  <bt:Image size="16" resid="Gem.Icon16" />
+                  <bt:Image size="32" resid="Gem.Icon32" />
+                  <bt:Image size="80" resid="Gem.Icon80" />
+                </Icon>
+                <Control xsi:type="Button" id="Gem.Button.PowerPoint">
+                  <Label resid="Gem.ButtonLabel" />
+                  <Supertip>
+                    <Title resid="Gem.ButtonTitle" />
+                    <Description resid="Gem.ButtonTip" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Gem.Icon16" />
+                    <bt:Image size="32" resid="Gem.Icon32" />
+                    <bt:Image size="80" resid="Gem.Icon80" />
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>Gem.Pane.PowerPoint</TaskpaneId>
+                    <SourceLocation resid="Gem.TaskpaneUrl" />
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Gem.Icon16" DefaultValue="https://sr-agente208.github.io/Gem.AI/office/icons/icon-16.png" />
+        <bt:Image id="Gem.Icon32" DefaultValue="https://sr-agente208.github.io/Gem.AI/office/icons/icon-32.png" />
+        <bt:Image id="Gem.Icon80" DefaultValue="https://sr-agente208.github.io/Gem.AI/office/icons/icon-80.png" />
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Gem.TaskpaneUrl" DefaultValue="https://sr-agente208.github.io/Gem.AI/office/taskpane.html" />
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="Gem.GroupLabel" DefaultValue="Gem.AI" />
+        <bt:String id="Gem.ButtonLabel" DefaultValue="Analisar com IA" />
+        <bt:String id="Gem.ButtonTitle" DefaultValue="Gem.AI · Analisar documento" />
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="Gem.ButtonTip" DefaultValue="Lê o conteúdo aberto no Word, Excel ou PowerPoint e pergunta à IA pelo proxy seguro do Supabase." />
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0d14" />
+    <meta name="color-scheme" content="dark" />
+    <title>Gem.AI · Assistente no Office</title>
+
+    <!-- A API JavaScript do Office EXIGE a biblioteca da CDN oficial da Microsoft.
+         Esta é a ÚNICA página do projeto com CDN. O chat principal (index.html)
+         continua 100% local. Se a CDN nova falhar, caímos na CDN clássica. -->
+    <script
+      type="text/javascript"
+      src="https://officeapis.public.onecdn.static.microsoft/1/office.js"
+      onerror="this.onerror=null;var f=document.createElement('script');f.src='https://appsforoffice.microsoft.com/lib/1/hosted/office.js';document.head.appendChild(f);"
+    ></script>
+    <link rel="stylesheet" href="./taskpane.css" />
+  </head>
+  <body>
+    <header class="head">
+      <div class="brand"><span aria-hidden="true">✦</span> Gem<span>.AI</span></div>
+      <span id="hostBadge" class="host-badge">conectando…</span>
+    </header>
+
+    <main class="pane">
+      <p id="status" class="status" role="status" aria-live="polite">
+        Inicializando o Office.js…
+      </p>
+
+      <section class="card">
+        <div class="card-title">Documento aberto</div>
+        <label class="check">
+          <input id="includeDoc" type="checkbox" checked />
+          Incluir o conteúdo do documento na pergunta
+        </label>
+        <div class="row">
+          <button id="readBtn" class="ghost" type="button">Ler documento</button>
+          <span id="docInfo" class="doc-info">—</span>
+        </div>
+        <p class="hint">
+          Word: corpo inteiro · Excel: planilhas usadas (até 12) · PowerPoint: texto
+          das formas (PowerPointApi 1.4+). Se não houver API específica, usamos só a
+          seleção. Nada é enviado ao Storage: o texto vai direto para a Groq pelo proxy.
+        </p>
+      </section>
+
+      <label class="field">
+        <span>Pergunta</span>
+        <textarea id="question" rows="3">Resuma este documento e destaque os pontos principais.</textarea>
+      </label>
+
+      <div class="row actions">
+        <button id="analyzeBtn" class="primary" type="button">Analisar com IA</button>
+        <button id="stopBtn" class="ghost" type="button" hidden>Parar</button>
+      </div>
+
+      <section class="card answer-card">
+        <div class="card-title">Resposta</div>
+        <div id="answer" class="answer"><span class="muted">A resposta aparece aqui.</span></div>
+        <div class="row actions">
+          <button id="copyBtn" class="ghost" type="button">Copiar</button>
+          <button id="insertBtn" class="ghost" type="button">Inserir no documento</button>
+        </div>
+      </section>
+
+      <footer class="foot">
+        <a href="../index.html" target="_blank" rel="noopener noreferrer">Abrir chat completo ↗</a>
+        <span>·</span>
+        <a href="https://github.com/Sr-agente208/Gem.AI/blob/arena/e947b2eb-gem-ai/OFFICE-ADDIN.md" target="_blank" rel="noopener noreferrer">Documentação</a>
+        <p>
+          Configurações (modelo/token) são as mesmas do chat, pois ambos rodam na
+          mesma origem. Este painel não grava histórico no Supabase.
+        </p>
+      </footer>
+    </main>
+
+    <script type="module" src="./taskpane.js"></script>
+  </body>
+</html>

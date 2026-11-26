@@ -29,6 +29,8 @@ Chat com IA **100% estático**, feito para **GitHub Pages**:
               │                            /storage/v1/object/sign/... ← download temporário
               ├──────────────────────────► GitHub Issues (issue pré-preenchida)
               │
+              ├── Office (Word/Excel/PPT) ► docs/office/taskpane.html + office.js (CDN)
+              │                            └──────────► /functions/v1/gem-chat
               └──────────────────────────► /functions/v1/gem-chat
                                               │  GROQ_API_KEY (Supabase Secret)
                                               ▼
@@ -52,6 +54,7 @@ direto para o Storage e apenas o texto/imagem processados no navegador vão ao m
 | Migration `gem_ai_files` | ✅ aplicada (`attachments`, `display_content`, bucket `gem-uploads`, 4 políticas de Storage) |
 | Migration `gem_ai_files_limit` | ✅ aplicada (bucket com teto de 1 GiB; quem limita hoje é o plano) |
 | Migration `gem_ai_support` | ✅ aplicada (FAQ + chamados + mensagens, 3 políticas RLS, 3 RPCs, trigger de status) |
+| **Add-in do Office** | ✅ painel de tarefas Word/Excel/PowerPoint + manifesto XML + sideload documentado |
 | Limite por arquivo | ✅ **1 GiB** por arquivo lógico, dividido em partes de 48 MiB (teto por objeto do Free: 50 MiB) |
 | Edge Function `gem-chat` | ✅ ativa, **v10**, `verify_jwt = false`, multimodal + diagnósticos |
 | `GROQ_API_KEY` | ✅ gravada como **secret** no Supabase (não está em nenhum arquivo) |
@@ -426,6 +429,41 @@ ficar online. Erros 4xx de validação não entram na fila.
 Runbook completo para quem responde os chamados (SQL de resposta, edição da FAQ,
 status, troubleshooting): **[SUPORTE.md](SUPORTE.md)**.
 
+---
+
+## Add-in do Office (Office.js) ✅
+
+ Um suplemento de **painel de tarefas** lê o **documento aberto** no Word, Excel
+ ou PowerPoint e analisa com a Groq pelo mesmo proxy. Documentação completa:
+ **[OFFICE-ADDIN.md](OFFICE-ADDIN.md)**.
+
+> ⚠️ **Diferença importante:** a API JavaScript do Office **não lê `.docx/.xlsx`
+> anexados no navegador**. Ela só existe dentro de um Add-in, com manifesto,
+> `Office.onReady()` e a biblioteca `office.js` da CDN oficial da Microsoft.
+> Os arquivos anexados continuam sendo extraídos **100% localmente** por
+> `extract.js` / `office-legacy.js` — sem CDN, sem worker, sem dependências.
+
+| Host | Leitura | Fallback |
+| --- | --- | --- |
+| Word | `body.load("text")` · `WordApi 1.1` | parágrafos → seleção |
+| Excel | planilhas usadas + `getUsedRange().load("values")` · `ExcelApi 1.1` | seleção |
+| PowerPoint | `textFrame.textRange.load("text")` · `PowerPointApi 1.4` | seleção |
+
+- `docs/office/taskpane.html` é a **única** página com CDN (`office.js`); o
+  `index.html` do chat segue 100% local. Há `onerror` para a CDN clássica e timeout
+  de 12 s com aviso honesto se a Microsoft estiver bloqueada.
+- `docs/office/manifest.xml`: `TaskPaneApp`, 3 hosts (`Document`/`Workbook`/
+  `Presentation`), botão *Analisar com IA* na aba Página Inicial, ícones 16/32/80.
+- Reutiliza `groq.js`, `buildContent()`, `renderMarkdown()` e `spreadsheet.js`;
+  `localStorage` é compartilhado com o chat (mesma origem), então modelo/token já
+  configurados valem no painel.
+- **Inserir resposta** no fim do Word ou na célula selecionada do Excel; Copiar nos
+  demais. O painel não grava histórico nem faz upload para o Storage.
+- URLs: [painel](https://sr-agente208.github.io/Gem.AI/office/taskpane.html) ·
+  [manifesto](https://sr-agente208.github.io/Gem.AI/office/manifest.xml).
+- Sideload: Office na Web → *Inserir → Suplementos → Fazer upload do meu
+  suplemento*. Desktop exige catálogo de pasta compartilhada (detalhes no doc).
+
 ## Passo 4 · Rodar localmente (opcional)
 
 ```bash
@@ -498,6 +536,7 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 ```
 .
 ├── README.md
+├── OFFICE-ADDIN.md             # Add-in do Office: APIs, manifesto, sideload, limites
 ├── SUPORTE.md                   # runbook da equipe de suporte (SQL de resposta, status, FAQ)
 ├── .github/ISSUE_TEMPLATE/      # formulário de issue + links de contato
 ├── .env.example                 # referência de variáveis (nada de segredo aqui)
@@ -511,6 +550,12 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 │   ├── icons/
 │   │   ├── icon-192.png         # apple-touch-icon + PWA 192px (maskable)
 │   │   └── icon-512.png         # PWA 512px (maskable)
+│   ├── office/                  # suplemento do Office (única página com CDN)
+│   │   ├── manifest.xml         # TaskPaneApp · Word/Excel/PowerPoint
+│   │   ├── taskpane.html        # <script> office.js da CDN oficial
+│   │   ├── taskpane.css
+│   │   ├── taskpane.js
+│   │   └── icons/               # icon-16/32/64/80.png exigidos pelo manifesto
 │   └── js/
 │       ├── config.js            # URL + publishable key + token + modelos + limites de arquivo
 │       ├── db.js                # cliente PostgREST (conversas e mensagens + anexos)
@@ -574,4 +619,7 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 | `404 Could not find the function ... gem_create_support_ticket` | Cache do PostgREST após a migration: rode `notify pgrst, 'reload schema';` e confira os `grant execute` |
 | FAQ/chamados não aparecem na central | Migration `gem_ai_support` não aplicada ou `x-gem-owner` ausente. A FAQ essencial embutida continua funcionando |
 | Chamado virou `RASCUNHO` | Envio falhou por rede: fica no `localStorage` e é reenviado sozinho ao voltar online. Erros 4xx aparecem como toast |
+| Add-in mostra "Office.js não carregou" | CDN da Microsoft bloqueada por firewall/proxy/extensão; `Office.onReady()` nunca resolve. O `onerror` tenta a CDN clássica e o timeout de 12 s avisa. O chat continua 100% local |
+| Add-in não lê o PowerPoint inteiro | `PowerPointApi 1.4` ausente nessa versão: o painel usa só a seleção e avisa. Atualize o Office ou selecione as formas |
+| `Token de acesso inválido` no painel | Configure `GEM_CHAT_TOKEN` nas Configurações do **chat** (mesma origem, mesmo `localStorage`) |
 | Página 404 no Pages | Branch/folder errados, repositório privado em plano Free, ou build ainda rodando (~30 s) |
