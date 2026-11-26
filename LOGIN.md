@@ -169,6 +169,7 @@ alteração (v10 intacta).
 | Link de recuperação não chega | Plano Free: ~2 e-mails/hora, sem SMTP. Configure SMTP próprio. |
 | Botão Google/GitHub dá erro | Provedor não habilitado — veja a seção 4. |
 | "O login social voltou em modo PKCE" | Use e-mail/senha; PKCE sem SDK exige exchange server. |
+| Login social abre e volta com erro no preview do Arena | O provedor pode bloquear OAuth dentro de iframe (`X-Frame-Options`/cookies `SameSite`). Abra o **GitHub Pages em uma aba própria** para testar Google/GitHub. |
 | Histórico sumiu depois de entrar | O `gem_link_current_owner()` pode ter falhado (rede). Abra **Minha conta → Vincular este navegador**. |
 | Conversas continuam no outro dispositivo | Entre com a **mesma conta** e vincule aquele navegador. |
 | "Sua sessão expirou" | O refresh roda a cada 45 s; se o token ficou inválido, entre de novo. |

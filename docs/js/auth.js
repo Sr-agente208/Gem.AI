@@ -214,7 +214,9 @@ export async function signUp({ fullName, email, password }) {
     await linkCurrentOwner().catch(() => {});
     return { authenticated: true, user: next.user };
   }
-  // mailer_autoconfirm=false: o usuário precisa confirmar o e-mail.
+  // Sem sessão no retorno = o projeto está com confirmação de e-mail ligada
+  // (mailer_autoconfirm desligado). Hoje está ligado, então este ramo só ocorre
+  // se alguém desativar o auto-confirm no painel.
   return { authenticated: false, needsConfirmation: true, user: payload?.user || null };
 }
 
