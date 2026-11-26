@@ -252,36 +252,134 @@ function storageHeaders(extra = {}) {
   };
 }
 
+/** Base64 UTF-8 para os pares do header Upload-Metadata do TUS. */
+function tusEncode(value) {
+  const bytes = new TextEncoder().encode(String(value));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function storageError(response) {
+  const raw = await response.text().catch(() => "");
+  let detail = raw.slice(0, 200);
+  try {
+    const parsed = JSON.parse(raw);
+    detail = parsed.message || parsed.error || detail;
+  } catch {
+    /* resposta em texto puro */
+  }
+  if (response.status === 413) {
+    return (
+      `Arquivo acima do limite do Storage (HTTP 413). ${detail} ` +
+      `O plano atual aceita até ${formatBytes(getConfig().maxFileBytes)} por arquivo.`
+    );
+  }
+  return `HTTP ${response.status} ${detail}`.trim();
+}
+
+/** Upload direto, usado para arquivos pequenos (até ~6 MB). */
+async function simpleUpload(path, item) {
+  const config = getConfig();
+  const response = await fetch(
+    `${getStorageUrl()}/object/${config.storageBucket}/${path}`,
+    {
+      method: "POST",
+      headers: storageHeaders({
+        "Content-Type": item.type || "application/octet-stream",
+        "x-upsert": "false",
+      }),
+      body: item.file,
+    },
+  );
+  if (!response.ok) throw new Error(await storageError(response));
+}
+
+/**
+ * Upload resumável TUS em chunks, recomendado para arquivos grandes:
+ * mostra progresso, sobrevive melhor a quedas de conexão e NÃO exige JWT —
+ * usa apenas apikey + x-gem-owner, como o resto do app.
+ * Validado: POST create 201 -> PATCH 204 (offset avança) -> objeto gravado.
+ */
+async function resumableUpload(path, item, onProgress) {
+  const config = getConfig();
+  const metadata = [
+    `bucketName ${tusEncode(config.storageBucket)}`,
+    `objectName ${tusEncode(path)}`,
+    `contentType ${tusEncode(item.type || "application/octet-stream")}`,
+  ].join(",");
+
+  const create = await fetch(`${getStorageUrl()}/upload/resumable`, {
+    method: "POST",
+    headers: storageHeaders({
+      "Tus-Resumable": "1.0.0",
+      "Upload-Length": String(item.file.size),
+      "Upload-Metadata": metadata,
+      "x-upsert": "false",
+    }),
+  });
+  if (!create.ok) throw new Error(await storageError(create));
+  const location = create.headers.get("Location") || create.headers.get("location");
+  if (!location) throw new Error("O Storage não devolveu a URL de upload resumável.");
+
+  const chunkSize = Math.max(1024 * 1024, config.uploadChunkBytes || 6 * 1024 * 1024);
+  let offset = 0;
+  while (offset < item.file.size) {
+    const end = Math.min(offset + chunkSize, item.file.size);
+    const patch = await fetch(location, {
+      method: "PATCH",
+      headers: storageHeaders({
+        "Tus-Resumable": "1.0.0",
+        "Upload-Offset": String(offset),
+        "Content-Type": "application/offset+octet-stream",
+      }),
+      body: item.file.slice(offset, end),
+    });
+    if (!patch.ok) throw new Error(await storageError(patch));
+    const next = Number(
+      patch.headers.get("Upload-Offset") || patch.headers.get("upload-offset"),
+    );
+    if (!Number.isFinite(next) || next <= offset) {
+      throw new Error("O upload resumável não avançou (offset inválido).");
+    }
+    offset = next;
+    onProgress?.(offset, item.file.size);
+  }
+}
+
 /** Envia os originais para o bucket privado. Falhas são avisos, não bloqueiam o chat. */
-export async function uploadAttachments(conversationId, attachments) {
+export async function uploadAttachments(conversationId, attachments, onProgress) {
   const config = getConfig();
   const owner = getOwnerKey();
   const metas = [];
   const warnings = [];
+  let done = 0;
 
   for (const item of attachments) {
     const path = `${owner}/${conversationId}/${uid()}-${safeName(item.name)}`;
+    const total = item.file?.size || item.size || 0;
+    const report = (loaded) =>
+      onProgress?.({
+        id: item.id,
+        name: item.name,
+        loaded,
+        total,
+        index: done,
+        count: attachments.length,
+      });
     try {
-      const response = await fetch(
-        `${getStorageUrl()}/object/${config.storageBucket}/${path}`,
-        {
-          method: "POST",
-          headers: storageHeaders({
-            "Content-Type": item.type || "application/octet-stream",
-            "x-upsert": "false",
-          }),
-          body: item.file,
-        },
-      );
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error(`HTTP ${response.status} ${detail.slice(0, 160)}`);
+      if (item.file && item.file.size > config.resumableThreshold) {
+        await resumableUpload(path, item, report);
+      } else {
+        await simpleUpload(path, item);
+        report(total);
       }
       metas.push(attachmentMetadata(item, path));
     } catch (error) {
       warnings.push(`Não foi possível salvar ${item.name} no Storage: ${error.message}`);
       metas.push(attachmentMetadata(item, null));
     }
+    done += 1;
   }
 
   return { metas, warnings };

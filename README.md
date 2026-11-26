@@ -47,6 +47,8 @@ direto para o Storage e apenas o texto/imagem processados no navegador vão ao m
 | Projeto Supabase | `escola-de-jegues` · ref `jikizafsbrclkfgoccha` · região `ca-central-1` |
 | Migration `gem_ai_init` | ✅ aplicada (`gem_conversations`, `gem_messages`, 7 políticas RLS, trigger) |
 | Migration `gem_ai_files` | ✅ aplicada (`attachments`, `display_content`, bucket `gem-uploads`, 4 políticas de Storage) |
+| Migration `gem_ai_files_limit` | ✅ aplicada (bucket com teto de 1 GiB; quem limita hoje é o plano) |
+| Limite por arquivo | ⚠️ **50 MiB** — teto do plano **Free**, medido: 52.428.800 B → 200; 53.477.376 B → 413 |
 | Edge Function `gem-chat` | ✅ ativa, **v10**, `verify_jwt = false`, multimodal + diagnósticos |
 | `GROQ_API_KEY` | ✅ gravada como **secret** no Supabase (não está em nenhum arquivo) |
 | `GEM_CHAT_TOKEN` | ✅ secret no Supabase + valor padrão no `config.js`; exigido no POST |
@@ -163,9 +165,26 @@ o texto (ou só os arquivos). Nas mensagens antigas, clique num anexo para abrir
 | **PDF** | Texto extraído no navegador com `pdfjs-dist@4` (até 20 páginas) via CDN, carregado sob demanda. PDFs digitalizados sem camada de texto ficam salvos, mas não são "lidos" — aparece um aviso. |
 | **Outros** | Salvos no Storage e listados na bolha, mas o modelo recebe só um aviso de que não lê aquele formato. |
 
-Limites (`docs/js/config.js`): **5 arquivos** por mensagem, **10 MB** por arquivo (igual ao
-`file_size_limit` do bucket), **3 imagens** por requisição, **20.000 caracteres** extraídos
-por arquivo de texto/PDF. O proxy também corta em 3 imagens e 4 MB de base64 por imagem.
+Limites (`docs/js/config.js`): **5 arquivos** por mensagem, **50 MiB** por arquivo,
+**3 imagens** por requisição, **20.000 caracteres** extraídos por arquivo de texto/PDF.
+O proxy também corta em 3 imagens e 4 MB de base64 por imagem.
+
+> **Sobre o pedido de 1 GB:** não é possível neste projeto hoje. O Supabase define um
+> *Global file size limit* por plano: **Free = 50 MB**, **Pro = até 500 GB**. Medimos no
+> projeto real com uploads de teste: 49 MiB e exatamente 50 MiB (52.428.800 B) → HTTP 200;
+> 51 MiB (53.477.376 B) → `413 EntityTooLarge`. O bucket `gem-uploads` já está configurado
+> com **1 GiB**, então **não é ele o gargalo** — basta o plano subir. Para aceitar 1 GB por
+> arquivo: (1) upgrade para Pro e aumento do *Global file size limit* em
+> **Storage Settings**; (2) trocar `CONFIG.maxFileBytes` para `1024 * 1024 * 1024`.
+> O front já está pronto: arquivos acima de 6 MB usam **upload resumável TUS** em chunks
+> de 6 MB, com progresso na tela, validado ponta a ponta (create 201 → PATCH 204 → objeto
+> gravado). Também há **1 GB de armazenamento total** no Free (~20 arquivos de 50 MB);
+> no Pro são 100 GB incluídos.
+
+- **Upload resumável:** até 6 MB vai por `POST /object/...`; acima disso o app usa
+  `POST /storage/v1/upload/resumable` (TUS 1.0.0) + `PATCH` por chunk. Não precisa de
+  JWT: usa `apikey` + `x-gem-owner`, e o Storage expõe `Location`/`Upload-Offset` via CORS.
+  O progresso aparece acima do composer.
 
 - **Visão:** único modelo da conta que aceita imagem é `qwen/qwen3.8-27b`
   (`CONFIG.visionModel`). Ao anexar imagens, o app troca automaticamente para ele — e a
@@ -205,7 +224,7 @@ e para testar a conexão com Supabase + Groq.
 gem_conversations (id, owner_key, title, model, system_prompt, created_at, updated_at)
 gem_messages     (id, conversation_id → gem_conversations ON DELETE CASCADE,
                   role, content, display_content, attachments jsonb, created_at)
-storage.buckets  ('gem-uploads', public = false, file_size_limit = 10485760)
+storage.buckets  ('gem-uploads', public = false, file_size_limit = 1073741824 /* 1 GiB */)
 ```
 
 - `gem_current_owner()` lê `current_setting('request.headers')::json ->> 'x-gem-owner'`.
@@ -269,6 +288,7 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
     ├── config.toml
     ├── migrations/202611240001_gem_ai_init.sql
     ├── migrations/202611240002_gem_ai_files.sql
+    ├── migrations/202611240003_gem_ai_files_limit.sql
     └── functions/gem-chat/index.ts
 ```
 
@@ -280,7 +300,8 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 | Mudar o comportamento padrão | `DEFAULT_SYSTEM` na função e `defaultSystemPrompt` no `config.js` |
 | Mudar cores/layout | `docs/styles.css` (variáveis no `:root`) |
 | Trocar o token de acesso | `supabase secrets set GEM_CHAT_TOKEN=...` **e** `CONFIG.chatToken` em `docs/js/config.js` |
-| Mudar limites de anexo | `CONFIG.maxFilesPerMessage`, `maxFileBytes`, `maxImagesPerMessage`, `maxExtractChars`, `imageMaxEdge` em `docs/js/config.js` (mantenha `maxFileBytes` ≤ `file_size_limit` do bucket) |
+| Aceitar arquivos de 1 GB | Plano Pro + *Global file size limit* no dashboard, depois `CONFIG.maxFileBytes = 1024 * 1024 * 1024` |
+| Mudar limites de anexo | `CONFIG.maxFilesPerMessage`, `maxFileBytes`, `maxImagesPerMessage`, `maxExtractChars`, `imageMaxEdge`, `resumableThreshold`, `uploadChunkBytes` em `docs/js/config.js` |
 | Trocar o bucket | `CONFIG.storageBucket` + a migration `202611240002_gem_ai_files.sql` + `index.ts` |
 | Usar outro projeto Supabase | `docs/js/config.js` ou Configurações → Avançado |
 
@@ -295,6 +316,8 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 | Sidebar vazia após trocar de navegador | É o esperado: o `owner_key` é local por navegador |
 | `model_decommissioned` / modelo inválido | Use **Atualizar** no seletor e ajuste `ALLOWED_MODELS` |
 | `Não foi possível salvar … no Storage` | Dono/chave divergentes ou bucket ausente: rode `?storage=1` na função e confira `CONFIG.storageBucket` |
+| `413 / The object exceeded the maximum allowed size` | Arquivo acima do teto do **plano** (50 MB no Free). O bucket aceita 1 GiB; é o limite global que barra — veja a seção de arquivos |
+| Upload grande travou no meio | Acima de 6 MB o app usa TUS em chunks; confira `?cors=1` no diagnóstico e a conexão. O progresso aparece acima do composer |
 | PDF sem texto extraído | PDF digitalizado (imagem) ou CDN do `pdfjs-dist` bloqueada; o arquivo original continua disponível para download |
 | `Image must have at least 32 pixels` | Não deve ocorrer: `files.js` centraliza imagens pequenas num canvas 32×32 |
 | Imagens ignoradas com GPT-OSS | Esperado: o app e o proxy trocam automaticamente para `qwen/qwen3.8-27b` |

@@ -48,6 +48,8 @@ const ui = {
   attachBtn: $("attachBtn"),
   attachmentTray: $("attachmentTray"),
   dropHint: $("dropHint"),
+  uploadStatus: $("uploadStatus"),
+  composerHint: $("composerHint"),
   toast: $("toast"),
   modal: $("settingsModal"),
   settingsClose: $("settingsClose"),
@@ -130,6 +132,11 @@ function toggleSending(sending) {
   ui.sendBtn.hidden = sending;
   ui.stopBtn.hidden = !sending;
   ui.sendBtn.disabled = sending;
+}
+
+function setUploadStatus(text) {
+  ui.uploadStatus.hidden = !text;
+  ui.uploadStatus.textContent = text || "";
 }
 
 /* ------------------------------ anexos ------------------------------ */
@@ -453,9 +460,22 @@ async function sendMessage(text, options = {}) {
     // Originais vão para o Storage privado; falhas viram aviso, não bloqueiam o chat.
     let metas = [];
     if (attachments.length) {
-      const upload = await uploadAttachments(conversation.id, attachments);
-      metas = upload.metas;
-      for (const warning of upload.warnings) showToast(warning, "error");
+      setUploadStatus(`Enviando ${attachments.length} arquivo(s)…`);
+      try {
+        const upload = await uploadAttachments(conversation.id, attachments, (progress) => {
+          const percent = progress.total
+            ? Math.round((progress.loaded / progress.total) * 100)
+            : 0;
+          setUploadStatus(
+            `Enviando ${progress.index + 1}/${progress.count}: ${progress.name} · ` +
+              `${percent}% (${formatBytes(progress.loaded)} de ${formatBytes(progress.total)})`,
+          );
+        });
+        metas = upload.metas;
+        for (const warning of upload.warnings) showToast(warning, "error");
+      } finally {
+        setUploadStatus("");
+      }
     }
 
     ui.emptyState.hidden = true;
@@ -540,6 +560,7 @@ async function sendMessage(text, options = {}) {
     }
   } finally {
     toggleSending(false);
+    setUploadStatus("");
     state.controller = null;
     ui.promptInput.focus();
   }
@@ -845,6 +866,9 @@ function bindEvents() {
 
 (async function boot() {
   bindEvents();
+  ui.composerHint.textContent =
+    `Enter envia · Shift + Enter quebra linha · arraste arquivos aqui · ` +
+    `imagens, PDF, texto (até ${formatBytes(getConfig().maxFileBytes)})`;
   ui.modelPill.textContent = state.settings.model;
   try {
     await loadConversations();
