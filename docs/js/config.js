@@ -25,12 +25,14 @@ export const CONFIG = {
   storageBucket: "gem-uploads",
   visionModel: "qwen/qwen3.8-27b", // único modelo da conta que aceita imagens
   maxFilesPerMessage: 5,
-  // Teto REAL do plano Free deste projeto: 50 MiB por arquivo. Medido:
-  // 52428800 bytes -> 200 OK; 53477376 bytes -> 413 EntityTooLarge.
-  // O bucket já aceita 1 GiB; quem barra é o "Global file size limit" do plano.
-  // Para 1 GB+ por arquivo: mude para 1024 * 1024 * 1024 E suba o limite global
-  // em Storage Settings (exige plano Pro). Nenhum outra alteração é necessária.
-  maxFileBytes: 50 * 1024 * 1024,
+  // Limite por ARQUIVO LÓGICO no app. O plano Free só aceita 50 MiB por OBJETO
+  // (medido: 52428800 B -> 200; 53477376 B -> 413), então arquivos maiores são
+  // divididos em varias partes no Storage e recompostos no download.
+  // ATENÇÃO: o Free tambem tem ~1 GiB de ARMAZENAMENTO TOTAL; um unico arquivo
+  // de 1 GiB consome a cota inteira. No Pro (100 GiB) esse limite some.
+  maxFileBytes: 1024 * 1024 * 1024,
+  storagePartBytes: 48 * 1024 * 1024, // cada objeto no Storage (< 50 MiB do plano)
+  maxProcessBytes: 50 * 1024 * 1024, // acima disso nao lemos PDF/imagem na memoria
   resumableThreshold: 6 * 1024 * 1024, // acima disso, upload TUS em chunks
   uploadChunkBytes: 6 * 1024 * 1024, // tamanho de cada chunk do TUS
   maxImagesPerMessage: 3, // limite da Groq para qwen/qwen3.8-27b

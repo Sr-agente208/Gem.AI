@@ -227,8 +227,8 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .file-name { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .file-sub { font-size: 10.5px; color: var(--muted-2); }
 .file-chip.warn { border-color: rgba(248, 113, 113, .45); }
-.file-chip[data-path] { cursor: pointer; }
-.file-chip[data-path]:hover { border-color: var(--accent); background: var(--accent-soft); }
+.file-chip[data-paths] { cursor: pointer; }
+.file-chip[data-paths]:hover { border-color: var(--accent); background: var(--accent-soft); }
 .file-remove { flex: 0 0 22px; width: 22px; height: 22px; border: 0; border-radius: 7px; background: transparent; color: var(--muted-2); display: grid; place-items: center; font-size: 13px; }
 .file-remove:hover { color: var(--red); background: rgba(248, 113, 113, .14); }
 .file-dl { flex: 0 0 auto; color: var(--muted-2); font-size: 13px; }

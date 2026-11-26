@@ -17,7 +17,8 @@ export function formatBytes(bytes) {
   const value = Number(bytes) || 0;
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 function safeName(name) {
@@ -155,7 +156,10 @@ export async function processFiles(fileList, existing = []) {
     };
 
     try {
-      if (kind === "image") {
+      if (file.size > config.maxProcessBytes) {
+        // Evita carregar 1 GiB na memoria do navegador so para extrair texto.
+        item.note = `Arquivo grande (${formatBytes(file.size)}): salvo por partes, sem leitura no navegador.`;
+      } else if (kind === "image") {
         item.dataUrl = await downscaleImage(file, config.imageMaxEdge);
         item.preview = item.dataUrl;
         imageCount += 1;
@@ -227,7 +231,7 @@ export function messageToPayload(row) {
   ];
 }
 
-function attachmentMetadata(item, path) {
+function attachmentMetadata(item, path, parts) {
   const meta = {
     name: item.name,
     size: item.size,
@@ -235,6 +239,8 @@ function attachmentMetadata(item, path) {
     kind: item.kind,
     path: path || null,
   };
+  // Arquivos maiores que o teto por objeto viram varias partes no Storage.
+  if (parts && parts.length) meta.parts = parts;
   if (item.note) meta.note = item.note;
   // Cópia reduzida da imagem no jsonb mantém o contexto em perguntas de follow-up.
   if (item.kind === "image" && item.dataUrl && item.dataUrl.length <= 600000) {
@@ -278,42 +284,41 @@ async function storageError(response) {
   return `HTTP ${response.status} ${detail}`.trim();
 }
 
-/** Upload direto, usado para arquivos pequenos (até ~6 MB). */
-async function simpleUpload(path, item) {
+/** Upload direto, usado para blobs pequenos (até ~6 MB). */
+async function simpleUpload(path, blob, type) {
   const config = getConfig();
   const response = await fetch(
     `${getStorageUrl()}/object/${config.storageBucket}/${path}`,
     {
       method: "POST",
       headers: storageHeaders({
-        "Content-Type": item.type || "application/octet-stream",
+        "Content-Type": type || "application/octet-stream",
         "x-upsert": "false",
       }),
-      body: item.file,
+      body: blob,
     },
   );
   if (!response.ok) throw new Error(await storageError(response));
 }
 
 /**
- * Upload resumável TUS em chunks, recomendado para arquivos grandes:
- * mostra progresso, sobrevive melhor a quedas de conexão e NÃO exige JWT —
- * usa apenas apikey + x-gem-owner, como o resto do app.
+ * Upload resumável TUS em chunks, recomendado para blobs grandes:
+ * mostra progresso e NÃO exige JWT — usa apenas apikey + x-gem-owner.
  * Validado: POST create 201 -> PATCH 204 (offset avança) -> objeto gravado.
  */
-async function resumableUpload(path, item, onProgress) {
+async function resumableUpload(path, blob, size, type, onProgress) {
   const config = getConfig();
   const metadata = [
     `bucketName ${tusEncode(config.storageBucket)}`,
     `objectName ${tusEncode(path)}`,
-    `contentType ${tusEncode(item.type || "application/octet-stream")}`,
+    `contentType ${tusEncode(type || "application/octet-stream")}`,
   ].join(",");
 
   const create = await fetch(`${getStorageUrl()}/upload/resumable`, {
     method: "POST",
     headers: storageHeaders({
       "Tus-Resumable": "1.0.0",
-      "Upload-Length": String(item.file.size),
+      "Upload-Length": String(size),
       "Upload-Metadata": metadata,
       "x-upsert": "false",
     }),
@@ -324,8 +329,8 @@ async function resumableUpload(path, item, onProgress) {
 
   const chunkSize = Math.max(1024 * 1024, config.uploadChunkBytes || 6 * 1024 * 1024);
   let offset = 0;
-  while (offset < item.file.size) {
-    const end = Math.min(offset + chunkSize, item.file.size);
+  while (offset < size) {
+    const end = Math.min(offset + chunkSize, size);
     const patch = await fetch(location, {
       method: "PATCH",
       headers: storageHeaders({
@@ -333,7 +338,7 @@ async function resumableUpload(path, item, onProgress) {
         "Upload-Offset": String(offset),
         "Content-Type": "application/offset+octet-stream",
       }),
-      body: item.file.slice(offset, end),
+      body: blob.slice(offset, end),
     });
     if (!patch.ok) throw new Error(await storageError(patch));
     const next = Number(
@@ -343,11 +348,25 @@ async function resumableUpload(path, item, onProgress) {
       throw new Error("O upload resumável não avançou (offset inválido).");
     }
     offset = next;
-    onProgress?.(offset, item.file.size);
+    onProgress?.(offset, size);
   }
 }
 
-/** Envia os originais para o bucket privado. Falhas são avisos, não bloqueiam o chat. */
+async function uploadOne(path, blob, size, type, onProgress) {
+  const config = getConfig();
+  if (size > config.resumableThreshold) {
+    await resumableUpload(path, blob, size, type, onProgress);
+  } else {
+    await simpleUpload(path, blob, type);
+    onProgress?.(size, size);
+  }
+}
+
+/**
+ * Envia os originais para o bucket privado. Arquivos acima do teto por OBJETO
+ * do plano (50 MiB no Free) sao divididos em varias partes e recompostos no
+ * download. Falhas sao avisos, nao bloqueiam o chat.
+ */
 export async function uploadAttachments(conversationId, attachments, onProgress) {
   const config = getConfig();
   const owner = getOwnerKey();
@@ -356,33 +375,80 @@ export async function uploadAttachments(conversationId, attachments, onProgress)
   let done = 0;
 
   for (const item of attachments) {
-    const path = `${owner}/${conversationId}/${uid()}-${safeName(item.name)}`;
+    const basePath = `${owner}/${conversationId}/${uid()}-${safeName(item.name)}`;
     const total = item.file?.size || item.size || 0;
-    const report = (loaded) =>
+    const partSize = Math.min(config.storagePartBytes, config.maxFileBytes);
+    const partCount = Math.max(1, Math.ceil(total / partSize));
+    const parts = [];
+    const report = (loadedInPart, partIndex) =>
       onProgress?.({
         id: item.id,
         name: item.name,
-        loaded,
+        loaded: Math.min(total, partIndex * partSize + loadedInPart),
         total,
         index: done,
         count: attachments.length,
+        part: partIndex + 1,
+        parts: partCount,
       });
+
     try {
-      if (item.file && item.file.size > config.resumableThreshold) {
-        await resumableUpload(path, item, report);
+      if (partCount === 1) {
+        await uploadOne(basePath, item.file, total, item.type, (loaded) => report(loaded, 0));
+        metas.push(attachmentMetadata(item, basePath));
       } else {
-        await simpleUpload(path, item);
-        report(total);
+        for (let index = 0; index < partCount; index += 1) {
+          const start = index * partSize;
+          const end = Math.min(start + partSize, total);
+          const blob = item.file.slice(start, end);
+          const partPath = `${basePath}.part${String(index + 1).padStart(4, "0")}`;
+          await uploadOne(partPath, blob, end - start, item.type, (loaded) =>
+            report(loaded, index),
+          );
+          parts.push({ path: partPath, size: end - start });
+        }
+        metas.push(attachmentMetadata(item, null, parts));
       }
-      metas.push(attachmentMetadata(item, path));
     } catch (error) {
       warnings.push(`Não foi possível salvar ${item.name} no Storage: ${error.message}`);
-      metas.push(attachmentMetadata(item, null));
+      metas.push(attachmentMetadata(item, null, parts));
     }
     done += 1;
   }
 
   return { metas, warnings };
+}
+
+/** Baixa todas as partes, recombina e dispara o download com o nome original. */
+export async function downloadAttachment(meta) {
+  const paths =
+    Array.isArray(meta.parts) && meta.parts.length
+      ? meta.parts.map((part) => part.path)
+      : meta.path
+        ? [meta.path]
+        : [];
+  if (!paths.length) throw new Error("Este anexo não foi salvo no Storage.");
+
+  const blobs = [];
+  for (const path of paths) {
+    const url = await getSignedUrl(path);
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Falha ao baixar uma parte do arquivo (HTTP ${response.status}).`);
+    }
+    blobs.push(await response.blob());
+  }
+
+  const blob = new Blob(blobs, { type: meta.type || "application/octet-stream" });
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = meta.name || "arquivo";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+  return { bytes: blob.size, parts: paths.length };
 }
 
 /** URL temporária para baixar/abrir um arquivo do bucket privado. */

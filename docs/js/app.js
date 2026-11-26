@@ -15,7 +15,7 @@ import {
   textFromContent,
   messageToPayload,
   uploadAttachments,
-  getSignedUrl,
+  downloadAttachment,
   deleteConversationFiles,
   formatBytes,
   kindLabel,
@@ -159,11 +159,18 @@ function attachmentChip(meta, removable = false) {
     );
   }
 
-  const attrs = meta.path
-    ? ` type="button" data-path="${escapeHtml(meta.path)}" data-name="${name}"`
+  const paths =
+    Array.isArray(meta.parts) && meta.parts.length
+      ? meta.parts.map((part) => part.path)
+      : meta.path
+        ? [meta.path]
+        : [];
+  const attrs = paths.length
+    ? ` type="button" data-paths="${escapeHtml(JSON.stringify(paths))}" ` +
+      `data-name="${name}" data-type="${escapeHtml(meta.type || "")}"`
     : "";
-  const tag = meta.path ? "button" : "div";
-  const action = meta.path ? '<span class="file-dl" aria-hidden="true">⬇</span>' : "";
+  const tag = paths.length ? "button" : "div";
+  const action = paths.length ? '<span class="file-dl" aria-hidden="true">⬇</span>' : "";
   return (
     `<${tag} class="file-chip${note ? " warn" : ""}"${attrs} title="${note || name}">` +
     `${preview}<span class="file-meta"><span class="file-name">${name}</span>` +
@@ -221,16 +228,15 @@ async function addFiles(fileList) {
   }
 }
 
-async function openAttachment(path) {
-  if (!path) {
-    showToast("Este arquivo não foi salvo no Storage.");
-    return;
-  }
+async function openAttachment(meta) {
   try {
-    const url = await getSignedUrl(path);
-    window.open(url, "_blank", "noopener,noreferrer");
+    setUploadStatus(`Baixando ${meta.name}…`);
+    await downloadAttachment(meta);
+    showToast(`Download de ${meta.name} iniciado.`, "ok");
   } catch (error) {
     showToast(error.message, "error");
+  } finally {
+    setUploadStatus("");
   }
 }
 
@@ -468,7 +474,8 @@ async function sendMessage(text, options = {}) {
             : 0;
           setUploadStatus(
             `Enviando ${progress.index + 1}/${progress.count}: ${progress.name} · ` +
-              `${percent}% (${formatBytes(progress.loaded)} de ${formatBytes(progress.total)})`,
+              `${percent}% (${formatBytes(progress.loaded)} de ${formatBytes(progress.total)})` +
+              (progress.parts > 1 ? ` · parte ${progress.part}/${progress.parts}` : ""),
           );
         });
         metas = upload.metas;
@@ -801,9 +808,19 @@ function bindEvents() {
   });
 
   ui.messages.addEventListener("click", (event) => {
-    const chip = event.target.closest(".file-chip[data-path]");
+    const chip = event.target.closest(".file-chip[data-paths]");
     if (chip) {
-      openAttachment(chip.dataset.path, chip.dataset.name);
+      let paths = [];
+      try {
+        paths = JSON.parse(chip.dataset.paths);
+      } catch {
+        paths = [];
+      }
+      openAttachment({
+        name: chip.dataset.name || "arquivo",
+        type: chip.dataset.type || "application/octet-stream",
+        parts: paths.map((path) => ({ path })),
+      });
       return;
     }
     const button = event.target.closest(".copy-code");

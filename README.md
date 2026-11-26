@@ -48,7 +48,7 @@ direto para o Storage e apenas o texto/imagem processados no navegador vão ao m
 | Migration `gem_ai_init` | ✅ aplicada (`gem_conversations`, `gem_messages`, 7 políticas RLS, trigger) |
 | Migration `gem_ai_files` | ✅ aplicada (`attachments`, `display_content`, bucket `gem-uploads`, 4 políticas de Storage) |
 | Migration `gem_ai_files_limit` | ✅ aplicada (bucket com teto de 1 GiB; quem limita hoje é o plano) |
-| Limite por arquivo | ⚠️ **50 MiB** — teto do plano **Free**, medido: 52.428.800 B → 200; 53.477.376 B → 413 |
+| Limite por arquivo | ✅ **1 GiB** por arquivo lógico, dividido em partes de 48 MiB (teto por objeto do Free: 50 MiB) |
 | Edge Function `gem-chat` | ✅ ativa, **v10**, `verify_jwt = false`, multimodal + diagnósticos |
 | `GROQ_API_KEY` | ✅ gravada como **secret** no Supabase (não está em nenhum arquivo) |
 | `GEM_CHAT_TOKEN` | ✅ secret no Supabase + valor padrão no `config.js`; exigido no POST |
@@ -165,33 +165,55 @@ o texto (ou só os arquivos). Nas mensagens antigas, clique num anexo para abrir
 | **PDF** | Texto extraído no navegador com `pdfjs-dist@4` (até 20 páginas) via CDN, carregado sob demanda. PDFs digitalizados sem camada de texto ficam salvos, mas não são "lidos" — aparece um aviso. |
 | **Outros** | Salvos no Storage e listados na bolha, mas o modelo recebe só um aviso de que não lê aquele formato. |
 
-Limites (`docs/js/config.js`): **5 arquivos** por mensagem, **50 MiB** por arquivo,
-**3 imagens** por requisição, **20.000 caracteres** extraídos por arquivo de texto/PDF.
-O proxy também corta em 3 imagens e 4 MB de base64 por imagem.
+Limites (`docs/js/config.js`): **5 arquivos** por mensagem, **1 GiB por arquivo**,
+**3 imagens** por requisição, **20.000 caracteres** extraídos por arquivo de texto/PDF
+(arquivos acima de 50 MiB não são lidos no navegador, só salvos). O proxy também corta
+em 3 imagens e 4 MB de base64 por imagem.
 
-> **Sobre o pedido de 1 GB:** não é possível neste projeto hoje. O Supabase define um
-> *Global file size limit* por plano: **Free = 50 MB**, **Pro = até 500 GB**. Medimos no
-> projeto real com uploads de teste: 49 MiB e exatamente 50 MiB (52.428.800 B) → HTTP 200;
-> 51 MiB (53.477.376 B) → `413 EntityTooLarge`. O bucket `gem-uploads` já está configurado
-> com **1 GiB**, então **não é ele o gargalo** — basta o plano subir. Para aceitar 1 GB por
-> arquivo: (1) upgrade para Pro e aumento do *Global file size limit* em
-> **Storage Settings**; (2) trocar `CONFIG.maxFileBytes` para `1024 * 1024 * 1024`.
-> O front já está pronto: arquivos acima de 6 MB usam **upload resumável TUS** em chunks
-> de 6 MB, com progresso na tela, validado ponta a ponta (create 201 → PATCH 204 → objeto
-> gravado). Também há **1 GB de armazenamento total** no Free (~20 arquivos de 50 MB);
-> no Pro são 100 GB incluídos.
+> **Como chegamos a 1 GiB sem pagar Pro:** o Supabase Free limita cada **objeto** a
+> **50 MiB** (medido: 52.428.800 B → 200; 53.477.376 B → `413 EntityTooLarge`). O app
+> então **divide** arquivos grandes em partes de 48 MiB (`storagePartBytes`), salva cada
+> parte como um objeto separado no mesmo prefixo e **recompõe no download**. Um arquivo
+> de 1 GiB vira 22 partes. O `file_size_limit` do bucket já é 1 GiB, e o *Global file
+> size limit* do plano continua valendo para cada parte — que fica abaixo dele.
+> ⚠️ O Free também tem **~1 GiB de armazenamento total**: um único arquivo de 1 GiB
+> consome a cota inteira. No Pro (100 GiB) isso deixa de ser problema; com o limite
+> global elevado, basta aumentar `storagePartBytes` para reduzir o número de partes.
 
-- **Upload resumável:** até 6 MB vai por `POST /object/...`; acima disso o app usa
-  `POST /storage/v1/upload/resumable` (TUS 1.0.0) + `PATCH` por chunk. Não precisa de
-  JWT: usa `apikey` + `x-gem-owner`, e o Storage expõe `Location`/`Upload-Offset` via CORS.
-  O progresso aparece acima do composer.
+- **Upload resumável + partes:** até 6 MB vai por `POST /object/...`; acima disso o app
+  usa `POST /storage/v1/upload/resumable` (TUS 1.0.0) + `PATCH` por chunk de 6 MB.
+  Não precisa de JWT: usa `apikey` + `x-gem-owner`, e o Storage expõe
+  `Location`/`Upload-Offset` via CORS. O progresso (arquivo/parte/%) aparece acima do
+  composer. No clique do anexo, `downloadAttachment()` gera uma URL assinada por parte,
+  baixa tudo, junta num `Blob` e dispara o download com o nome original.
+
+### Tentativa com Git / GitHub (medida, não adotada)
+
+A pedido, testei o Git como segundo provedor para grandes arquivos:
+
+| Teste real neste repo | Resultado |
+| --- | --- |
+| Arquivo em Git normal | limite **100 MiB** (25 MiB pela UI) |
+| Git LFS, `objects/batch` com 1 GiB | ✅ `200` + URL de upload pré-assinada |
+| Git LFS com 2 GiB | ✅ `200` + URL de upload |
+| Git LFS com 5 GiB | ❌ `Size must be less than or equal to 2147483648` |
+| `PUT` na URL pré-assinada | aponta para `github-cloud.s3.amazonaws.com` |
+
+O Git LFS aceita 1–2 GB e devolve URLs pré-assinadas (o token fica no servidor e os
+bytes iriam direto do browser). **Não foi adotado** porque: (1) exigiria um **token de
+escrita do GitHub** como secret no Supabase — não vou mover a credencial desta sessão
+para outro serviço sem autorização; (2) o repositório é **público**, então os anexos
+deixariam de ser privados; (3) cada upload precisaria de um commit com o ponteiro LFS,
+o que polui o histórico e dispara rebuild do Pages; (4) o `PUT` vai para um host S3
+cujo CORS de browser não consegui validar neste sandbox. O Git continua sendo usado
+para o que faz bem: versionar o código e publicar o site a cada `git push`.
 
 - **Visão:** único modelo da conta que aceita imagem é `qwen/qwen3.8-27b`
   (`CONFIG.visionModel`). Ao anexar imagens, o app troca automaticamente para ele — e a
   função faz o mesmo no servidor, caso receba imagem com outro modelo. GPT-OSS não enxergam.
 - **Histórico:** `gem_messages.content` guarda o prompt real (texto + transcrições),
   `display_content` guarda só o que o usuário digitou e `attachments` guarda os metadados
-  (`name`, `size`, `type`, `kind`, `path` e uma miniatura reduzida da imagem). Ao reabrir
+  (`name`, `size`, `type`, `kind`, `path` **ou** `parts[]`, e uma miniatura reduzida da imagem). Ao reabrir
   uma conversa, as miniaturas e o contexto multimodal são reconstruídos.
 - **Privacidade:** bucket **`gem-uploads` é privado**. Caminho
   `<owner_key>/<conversation_id>/<uuid>-<nome>`; as 4 políticas `gem_files_*` comparam
@@ -300,8 +322,8 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 | Mudar o comportamento padrão | `DEFAULT_SYSTEM` na função e `defaultSystemPrompt` no `config.js` |
 | Mudar cores/layout | `docs/styles.css` (variáveis no `:root`) |
 | Trocar o token de acesso | `supabase secrets set GEM_CHAT_TOKEN=...` **e** `CONFIG.chatToken` em `docs/js/config.js` |
-| Aceitar arquivos de 1 GB | Plano Pro + *Global file size limit* no dashboard, depois `CONFIG.maxFileBytes = 1024 * 1024 * 1024` |
-| Mudar limites de anexo | `CONFIG.maxFilesPerMessage`, `maxFileBytes`, `maxImagesPerMessage`, `maxExtractChars`, `imageMaxEdge`, `resumableThreshold`, `uploadChunkBytes` em `docs/js/config.js` |
+| Aceitar mais de 1 GB | Suba `CONFIG.maxFileBytes`; com Pro, aumente também `storagePartBytes` (menos partes) |
+| Mudar limites de anexo | `CONFIG.maxFilesPerMessage`, `maxFileBytes`, `storagePartBytes`, `maxProcessBytes`, `maxImagesPerMessage`, `maxExtractChars`, `imageMaxEdge`, `resumableThreshold`, `uploadChunkBytes` em `docs/js/config.js` |
 | Trocar o bucket | `CONFIG.storageBucket` + a migration `202611240002_gem_ai_files.sql` + `index.ts` |
 | Usar outro projeto Supabase | `docs/js/config.js` ou Configurações → Avançado |
 
@@ -316,7 +338,8 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 | Sidebar vazia após trocar de navegador | É o esperado: o `owner_key` é local por navegador |
 | `model_decommissioned` / modelo inválido | Use **Atualizar** no seletor e ajuste `ALLOWED_MODELS` |
 | `Não foi possível salvar … no Storage` | Dono/chave divergentes ou bucket ausente: rode `?storage=1` na função e confira `CONFIG.storageBucket` |
-| `413 / The object exceeded the maximum allowed size` | Arquivo acima do teto do **plano** (50 MB no Free). O bucket aceita 1 GiB; é o limite global que barra — veja a seção de arquivos |
+| `413 / The object exceeded the maximum allowed size` | Uma parte ficou acima do teto do plano (50 MiB no Free). Reduza `CONFIG.storagePartBytes`; o bucket aceita 1 GiB |
+| Download de arquivo grande trava | O download junta todas as partes num `Blob` em memória. Para 1 GiB isso exige ~1 GiB de RAM no navegador |
 | Upload grande travou no meio | Acima de 6 MB o app usa TUS em chunks; confira `?cors=1` no diagnóstico e a conexão. O progresso aparece acima do composer |
 | PDF sem texto extraído | PDF digitalizado (imagem) ou CDN do `pdfjs-dist` bloqueada; o arquivo original continua disponível para download |
 | `Image must have at least 32 pixels` | Não deve ocorrer: `files.js` centraliza imagens pequenas num canvas 32×32 |
