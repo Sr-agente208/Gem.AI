@@ -227,26 +227,99 @@ para o que faz bem: versionar o código e publicar o site a cada `git push`.
 > Quem souber o UUID de outra pessoa poderia acessar os arquivos dela. Para produção, use
 > **Supabase Auth** + `auth.uid()` nas políticas do Storage.
 
-### Mobile / toque — ✅ corrigido
+### Compatibilidade mobile — iOS e Android ✅
 
-O botão de anexar não abria a galeria em celulares (principalmente iOS Safari).
-Causas e correções:
+O app é estático, sem build, e roda nos dois sistemas — inclusive **instalado como
+aplicativo**. Abaixo: a análise do bug do anexo, a matriz de plataformas e as
+decisões específicas de cada sistema.
+
+#### Análise do bug "não consigo anexar no celular"
+
+O botão de anexar não abria a galeria, principalmente no iOS Safari. Causas e correções:
 
 | Causa | Correção |
 | --- | --- |
-| `<input type="file" hidden>` + `.click()` por JS | Substituído por **`<label for="fileInput">`** e input invisível (`opacity:0`, 1×1px, **sem `display:none`**). O label abre o seletor nativo sem depender de JS — validado com jsdom (clique no label dispara o input). |
+| `<input type="file" hidden>` + `.click()` por JS | Substituído por **`<label for="fileInput">`** e input invisível (`opacity:0`, 1×1px, **sem `display:none` nem `pointer-events:none`**). O label abre o seletor nativo sem depender de JS — validado com jsdom (clique no label dispara o input). |
 | Alvo de toque de 34 px | **44×44 px** no clipe, enviar e parar; **40 px** no "remover anexo"; chips clicáveis com 44 px de altura |
 | `textarea` com 15 px → iOS dá zoom ao focar e empurra o composer | `input, select, textarea { font-size: 16px }` no mobile |
-| `height: 100vh` fica sob a barra de endereço do Safari | `100dvh` em `body`, `.chat`, `.sidebar` e no modal |
+| `height: 100vh` fica sob a barra de endereço do Safari | `100dvh` (com fallback `100vh`) em `body`, `.chat`, `.sidebar` e no modal |
 | Botão de apagar conversa só aparecia no `:hover` | `@media (hover: none)` deixa `.conv-delete` sempre visível com 36 px |
-| Home indicator / notch | `viewport-fit=cover` + `env(safe-area-inset-bottom)` no composer, toast e modal |
+| Home indicator / notch / Dynamic Island | `viewport-fit=cover` + `env(safe-area-inset-bottom)` no composer/toast e `env(safe-area-inset-top)` no header |
+| Pull-to-refresh ao rolar o histórico | `overscroll-behavior: none` no `body` e `contain` nas listas |
 | Hovers "presos" e delay de 300 ms | `touch-action: manipulation`, `-webkit-tap-highlight-color: transparent`, `-webkit-overflow-scrolling: touch` |
 | Texto do hint falava em "arrastar" | Em telas de toque: "Toque no clipe para anexar · toque em enviar…" |
-| Fotos de iPhone (`.heic`/`.heif`) | Reconhecidas como extensão de imagem |
-| Download por `link.click()` falha em WebViews in-app | Fallback `window.open(objectUrl)`; mantido `link.rel="noopener"` |
+| Fotos de iPhone (`.heic`/`.heif`) | Reconhecidas como imagem; se o navegador não decodificar, viram anexo comum com aviso em vez de quebrar a visão |
 
 O `<label>` mantém suporte a teclado (Enter/Espaço) e `aria-disabled` enquanto um arquivo
-está sendo processado. Não há dependência nova: continua HTML/CSS/JS puros.
+é processado. Não há dependência nova: continua HTML/CSS/JS puros.
+
+#### Matriz de suporte
+
+| Plataforma | Navegador | Seletor de arquivos | Teclado virtual | Instalação | Download |
+| --- | --- | --- | --- | --- | --- |
+| **iOS 15.4+** | Safari | ✅ Fototeca / Câmera / Arquivos | `visualViewport` → `.keyboard-open` | "Adicionar à Tela de Início" (`standalone`) | Web Share → "Salvar em Arquivos" ou `<a download>` |
+| iOS 15.4+ | Chrome / Firefox (WebKit) | ✅ mesma engine | ✅ mesma correção | atalho via Safari | ✅ |
+| **Android 8+** | Chrome 108+ | ✅ galeria / câmera / arquivos | `interactive-widget=resizes-content` | **"Instalar aplicativo"** (PWA) | Web Share nativa ou `<a download>` |
+| Android | Samsung Internet / Edge | ✅ | ✅ | atalho / PWA | ✅ |
+| iOS / Android | WebViews in-app (WhatsApp, Instagram…) | ⚠️ depende do app host | ⚠️ | ❌ | fallback `window.open(objectUrl)` |
+| Desktop | Chrome / Firefox / Safari / Edge | ✅ + drag & drop | n/a | n/a | `<a download>` |
+
+#### O que muda em cada sistema
+
+**iOS Safari** — o teclado **não redimensiona** o layout viewport: ele sobrepõe a tela e
+o `100dvh` permanece com a altura cheia, escondendo o composer. `setupMobilePlatform()`
+em `app.js` monitora `window.visualViewport`, calcula a área visível e publica
+`--app-height` + a classe `.keyboard-open` no `<html>` **somente enquanto há sobreposição**.
+`env(safe-area-inset-top)` no header evita que o notch/Dynamic Island cubra o título em
+modo standalone. O `apple-touch-icon` e `apple-mobile-web-app-capable` vêm do `<head>`.
+
+**Android Chrome** — `interactive-widget=resizes-content` no `<meta viewport>` faz o
+próprio `100dvh` encolher quando o teclado abre, então `--app-height` nunca é ativado:
+cada plataforma usa o mecanismo que realmente suporta. O `manifest.webmanifest` +
+`sw.js` habilitam o prompt "Instalar aplicativo"; os ícones 192/512 px são `maskable`
+para se adaptarem ao formato do launcher.
+
+**Ambos** — `manifest.webmanifest`, `theme-color`, `color-scheme: dark`, ícones PNG e
+`display: standalone`. O `sw.js` é **network-only, sem cache e sem offline**: ele existe
+apenas para satisfazer o critério de instalabilidade do Chrome. Como o app depende de
+Supabase + Groq e o Pages é republicado a cada commit, cachear HTML/JS deixaria o
+front dessincronizado da Edge Function.
+
+#### Decisões deliberadas
+
+- **Sem `capture`** no input: `capture="camera"` abriria só a câmera e **removeria a
+  galeria** no iOS — exatamente o oposto do que se quer aqui.
+- **Sem `accept`** restritivo: `accept="image/*"` impediria PDF e texto. Sem ele, o
+  sistema oferece Fototeca, Câmera e Arquivos conforme a plataforma.
+- **Sem service worker de cache / modo offline**: justificativa acima.
+- **HEIC/HEIF**: o Safari costuma converter via `<canvas>` para JPEG; Chrome e WebViews
+  não. Nesse caso o arquivo vai normalmente para o Storage/download, mas não entra no
+  array multimodal da Groq (evita base64 inválido e não gasta uma das 3 vagas de visão).
+- **Web Share API** (`navigator.share({files})`) é tentada antes do `<a download>` em
+  arquivos ≤ 50 MiB e somente enquanto `navigator.userActivation.isActive` é válido;
+  se o usuário cancelar ou o sistema recusar, cai no download clássico.
+- Limites de 1 GiB por arquivo lógico, partes de 48 MiB e TUS **não mudaram** — continuar
+  funcionando no celular foi critério de aceitação, sem regredir o desktop.
+
+#### Como instalar e testar no celular
+
+- **iOS**: abra https://sr-agente208.github.io/Gem.AI/ no **Safari** → Compartilhar →
+  *Adicionar à Tela de Início*. (No Chrome iOS o item não aparece; é limitação da Apple.)
+- **Android**: abra no **Chrome** → menu ⋮ → *Instalar aplicativo* / *Adicionar à tela inicial*.
+- Dê um **Ctrl+Shift+R / limpe o cache** ou use `?cb=mobile2` na primeira visita após um deploy.
+
+Checklist rápido:
+
+1. Toque no clipe → aparece Fototeca / Tirar foto / Procurar (iOS) ou Galeria / Câmera / Arquivos (Android).
+2. Escolha 1 imagem → chip com miniatura, nome e "✕" aparece acima do composer.
+3. Abra o teclado → o composer continua visível acima dele, sem zoom na página.
+4. Envie → progresso, resposta e chip clicável para baixar na bolha da mensagem.
+5. Gire a tela / abra a sidebar / apague uma conversa → alvos continuam alcançáveis.
+
+> **Validação honesta:** o sandbox não tem navegador headless nem dispositivo físico.
+> Foram validados o wiring do DOM com jsdom (19/19), `node --check` nos 6 módulos, os
+> 44 IDs do HTML, o MD5 dos arquivos servidos no preview e o deploy no Pages. O toque
+> real na galeria, o prompt de instalação e o Web Share dependem de teste no aparelho.
 
 ## Passo 4 · Rodar localmente (opcional)
 
@@ -318,15 +391,20 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 ├── .gitignore
 ├── docs/                        # ← raiz publicada pelo GitHub Pages
 │   ├── .nojekyll
-│   ├── index.html
-│   ├── styles.css
+│   ├── index.html               # viewport/PWA/Apple meta tags + composer (<label for>)
+│   ├── styles.css               # UI, toque 44px, 100dvh, safe-area, teclado iOS
+│   ├── manifest.webmanifest     # PWA instalável no Android / Tela de Início no iOS
+│   ├── sw.js                    # service worker network-only (critério de instalação)
+│   ├── icons/
+│   │   ├── icon-192.png         # apple-touch-icon + PWA 192px (maskable)
+│   │   └── icon-512.png         # PWA 512px (maskable)
 │   └── js/
 │       ├── config.js            # URL + publishable key + token + modelos + limites de arquivo
 │       ├── db.js                # cliente PostgREST (conversas e mensagens + anexos)
-│       ├── files.js             # anexos: validação, PDF, canvas, upload/URL assinada/limpeza
+│       ├── files.js             # anexos: validação, PDF, canvas, TUS, partes, Web Share
 │       ├── groq.js              # cliente SSE da Edge Function
 │       ├── markdown.js          # renderizador Markdown seguro
-│       └── app.js               # UI, histórico, streaming, anexos, modal de configs
+│       └── app.js               # UI, streaming, anexos, visualViewport/iOS, modal de configs
 └── supabase/
     ├── config.toml
     ├── migrations/202611240001_gem_ai_init.sql

@@ -174,7 +174,21 @@ export async function processFiles(fileList, existing = []) {
         item.note = "Arquivo salvo, mas o modelo não lê este formato diretamente.";
       }
     } catch (error) {
-      item.note = `Não foi possível processar: ${error?.message || error}`;
+      // Fotos do iPhone saem como HEIC. O Safari costuma decodificar, mas
+      // Chrome/Android e WebViews não: <img>/canvas falha. Em vez de mandar
+      // base64 inválido à Groq (ou ocupar uma das 3 vagas de visão), mantemos
+      // o original no Storage/download e avisamos que a análise visual
+      // requer JPEG/PNG.
+      const isHeic =
+        ["heic", "heif"].includes(extension(file.name)) || /heic|heif/i.test(file.type || "");
+      if (kind === "image" && isHeic) {
+        item.kind = "binary";
+        item.note =
+          "Foto HEIC anexada: este navegador não consegue convertê-la para o modelo. " +
+          "Envie como JPEG/PNG para análise visual (o arquivo original continua disponível).";
+      } else {
+        item.note = `Não foi possível processar: ${error?.message || error}`;
+      }
     }
 
     attachments.push(item);
@@ -441,19 +455,55 @@ export async function downloadAttachment(meta) {
 
   const blob = new Blob(blobs, { type: meta.type || "application/octet-stream" });
   const objectUrl = URL.createObjectURL(blob);
+  const revoke = () => setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+  const name = meta.name || "arquivo";
+
+  // Web Share API: no iOS é a forma confiável de "Salvar em Arquivos" e no
+  // Android abre a folha nativa de compartilhamento. Só tentamos quando a
+  // ativação do toque ainda é válida (os fetches acima podem demorar) e para
+  // arquivos pequenos — compartilhar 1 GiB não é suportado pelos sistemas.
+  let canShare = false;
+  let shareFile = null;
+  try {
+    if (
+      blob.size <= 50 * 1024 * 1024 &&
+      typeof navigator.share === "function" &&
+      typeof navigator.canShare === "function" &&
+      navigator.userActivation?.isActive !== false
+    ) {
+      shareFile = new File([blob], name, { type: meta.type || "application/octet-stream" });
+      canShare = navigator.canShare({ files: [shareFile] });
+    }
+  } catch {
+    canShare = false; // navegador sem suporte a compartilhar arquivos
+  }
+  if (canShare) {
+    try {
+      await navigator.share({ files: [shareFile], title: name });
+      revoke();
+      return { bytes: blob.size, parts: paths.length, via: "share" };
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        revoke();
+        return { bytes: blob.size, parts: paths.length, via: "cancelled" };
+      }
+      // Sem ativação, sem app de destino etc.: cai no download clássico.
+    }
+  }
+
   const link = document.createElement("a");
   link.href = objectUrl;
-  link.download = meta.name || "arquivo";
+  link.download = name;
   link.rel = "noopener";
   document.body.appendChild(link);
   try {
     link.click();
   } catch {
-    // WebViews de iOS/alguns navegadores in-app não disparam o download por click().
+    // WebViews in-app (Instagram/WhatsApp) não disparam download por click().
     window.open(objectUrl, "_blank", "noopener,noreferrer");
   }
   link.remove();
-  setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+  revoke();
   return { bytes: blob.size, parts: paths.length };
 }
 

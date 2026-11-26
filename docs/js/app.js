@@ -235,8 +235,14 @@ async function addFiles(fileList) {
 async function openAttachment(meta) {
   try {
     setUploadStatus(`Baixando ${meta.name}…`);
-    await downloadAttachment(meta);
-    showToast(`Download de ${meta.name} iniciado.`, "ok");
+    const result = await downloadAttachment(meta);
+    const message =
+      result?.via === "cancelled"
+        ? "Compartilhamento cancelado."
+        : result?.via === "share"
+          ? `${meta.name} enviado para o compartilhamento do sistema.`
+          : `Download de ${meta.name} iniciado.`;
+    showToast(message, "ok");
   } catch (error) {
     showToast(error.message, "error");
   } finally {
@@ -891,10 +897,61 @@ function bindEvents() {
   });
 }
 
+/* ------------------------- iOS / Android ------------------------- */
+
+/**
+ * Compatibilidade por plataforma:
+ * - Android Chrome: `interactive-widget=resizes-content` já faz o 100dvh
+ *   encolher quando o teclado abre; não há nada a corrigir aqui.
+ * - iOS Safari: o teclado apenas SOBREPÕE a tela e o 100dvh não muda.
+ *   Medimos visualViewport e publicamos --app-height (classe .keyboard-open).
+ * - Android: o service worker network-only habilita "Instalar aplicativo"
+ *   a partir do manifest; no iOS o modo standalone vem das meta Apple.
+ */
+function setupMobilePlatform() {
+  const isTouch = window.matchMedia?.("(hover: none), (pointer: coarse)").matches;
+  const root = document.documentElement;
+  const viewport = window.visualViewport;
+
+  if (isTouch && viewport) {
+    const syncHeight = () => {
+      // innerHeight = layout viewport; visualViewport = área acima do teclado.
+      const visible = viewport.height + viewport.offsetTop;
+      const covered = window.innerHeight - visible;
+      if (covered > 80) {
+        root.style.setProperty("--app-height", `${Math.max(240, Math.round(visible))}px`);
+        root.classList.add("keyboard-open");
+      } else {
+        root.classList.remove("keyboard-open");
+        root.style.removeProperty("--app-height");
+      }
+    };
+    syncHeight();
+    viewport.addEventListener("resize", syncHeight);
+    viewport.addEventListener("scroll", syncHeight);
+    window.addEventListener("orientationchange", () => setTimeout(syncHeight, 250));
+
+    // O Safari nem sempre reposiciona o composer ao terminar a animação.
+    ui.promptInput.addEventListener("focus", () => {
+      setTimeout(() => {
+        if (root.classList.contains("keyboard-open")) {
+          ui.composerWrap.scrollIntoView({ block: "end" });
+        }
+      }, 320);
+    });
+  }
+
+  // Registro silencioso: sem fetch handler o Chrome não oferece instalação.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(() => {});
+  }
+}
+
 /* ------------------------------ boot ------------------------------ */
 
 (async function boot() {
   bindEvents();
+  setupMobilePlatform();
   const isTouch = window.matchMedia?.("(hover: none), (pointer: coarse)").matches;
   const sizeHint = formatBytes(getConfig().maxFileBytes);
   ui.composerHint.textContent = isTouch
