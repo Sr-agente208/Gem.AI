@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: "💬 Central de ajuda e chamados (recomendado)"
+    url: https://sr-agente208.github.io/Gem.AI/
+    about: "Abra o app e toque em Ajuda e suporte: FAQ, chamado no Supabase com protocolo/status/thread e diagnóstico do navegador."
+  - name: "📖 Runbook da equipe de suporte"
+    url: https://github.com/Sr-agente208/Gem.AI/blob/arena/e947b2eb-gem-ai/SUPORTE.md
+    about: "Como responder chamados, editar a FAQ e acompanhar o fluxo de status."

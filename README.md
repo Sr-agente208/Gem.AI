@@ -23,8 +23,11 @@ Chat com IA **100% estático**, feito para **GitHub Pages**:
               │ apikey (publishable) + header x-gem-owner
               ├──────────────────────────► /rest/v1/gem_conversations
               │                            /rest/v1/gem_messages      ← histórico (RLS)
+              ├──────────────────────────► /rest/v1/gem_support_*    ← FAQ + chamados (RLS)
+              │                            /rest/v1/rpc/gem_*_support_ticket
               ├──────────────────────────► /storage/v1/object/gem-uploads/...
               │                            /storage/v1/object/sign/... ← download temporário
+              ├──────────────────────────► GitHub Issues (issue pré-preenchida)
               │
               └──────────────────────────► /functions/v1/gem-chat
                                               │  GROQ_API_KEY (Supabase Secret)
@@ -48,6 +51,7 @@ direto para o Storage e apenas o texto/imagem processados no navegador vão ao m
 | Migration `gem_ai_init` | ✅ aplicada (`gem_conversations`, `gem_messages`, 7 políticas RLS, trigger) |
 | Migration `gem_ai_files` | ✅ aplicada (`attachments`, `display_content`, bucket `gem-uploads`, 4 políticas de Storage) |
 | Migration `gem_ai_files_limit` | ✅ aplicada (bucket com teto de 1 GiB; quem limita hoje é o plano) |
+| Migration `gem_ai_support` | ✅ aplicada (FAQ + chamados + mensagens, 3 políticas RLS, 3 RPCs, trigger de status) |
 | Limite por arquivo | ✅ **1 GiB** por arquivo lógico, dividido em partes de 48 MiB (teto por objeto do Free: 50 MiB) |
 | Edge Function `gem-chat` | ✅ ativa, **v10**, `verify_jwt = false`, multimodal + diagnósticos |
 | `GROQ_API_KEY` | ✅ gravada como **secret** no Supabase (não está em nenhum arquivo) |
@@ -386,6 +390,42 @@ Checklist rápido:
 > 44 IDs do HTML, o MD5 dos arquivos servidos no preview e o deploy no Pages. O toque
 > real na galeria, o prompt de instalação e o Web Share dependem de teste no aparelho.
 
+---
+
+## Ajuda e suporte — central de chamados ✅
+
+O menu lateral ganhou **Ajuda e suporte**. Usa **Supabase** como backend principal
+(chamados persistidos, FAQ editável e respostas da equipe) e **Git/GitHub** como
+canal alternativo (issue pré-preenchida + template), sem token de escrita no
+navegador.
+
+| Aba | O que faz |
+| --- | --- |
+| **Ajuda** | FAQ vinda de `gem_support_faq` (editável no painel, sem deploy). Se o banco estiver offline, mostra uma FAQ essencial embutida no HTML |
+| **Abrir chamado** | Categoria, assunto, descrição, contato opcional e diagnóstico técnico (com checkbox e prévia exata do que será enviado). Cria protocolo de 8 caracteres |
+| **Meus chamados** | Protocolo, status (`aberto` → `em_analise` → `respondido` → `fechado`), thread com respostas da equipe, campo para acrescentar informação, encerrar, copiar protocolo ou abrir issue no GitHub |
+| **Diagnóstico** | Versão, navegador, plataforma, codecs de vídeo, `DecompressionStream`, PWA e últimos erros de runtime — **sem tokens, chaves ou conteúdo das conversas** |
+
+**Fluxo de dados:** `docs/js/support.js` chama `/rest/v1/rpc/gem_create_support_ticket`
+(transação atômica: chamado + 1ª mensagem), `/rpc/gem_reply_support_ticket` e
+`/rpc/gem_close_support_ticket`. RLS usa o mesmo `x-gem-owner` das conversas;
+**não há policy de escrita para `anon`** — toda escrita passa por RPCs
+`security definer` com validação e anti-abuso (5 chamados/hora, 20 mensagens/hora).
+Um trigger muda o status quando a equipe responde ou o usuário reabre o chamado.
+
+**Git / GitHub:** `.github/ISSUE_TEMPLATE/gem-ai-suporte.yml` + label `suporte`
++ `config.yml` com links de contato. O app monta
+`/issues/new?title=...&body=...&labels=suporte` com protocolo e diagnóstico; o
+usuário confirma a abertura logado na própria conta do GitHub.
+
+**Offline:** se o envio falhar por rede, o chamado fica em
+`localStorage["gem.support.outbox"]`, aparece como `RASCUNHO` em *Meus chamados* e
+é reenviado automaticamente ao abrir a central, clicar em *Atualizar* ou voltar a
+ficar online. Erros 4xx de validação não entram na fila.
+
+Runbook completo para quem responde os chamados (SQL de resposta, edição da FAQ,
+status, troubleshooting): **[SUPORTE.md](SUPORTE.md)**.
+
 ## Passo 4 · Rodar localmente (opcional)
 
 ```bash
@@ -406,6 +446,9 @@ gem_conversations (id, owner_key, title, model, system_prompt, created_at, updat
 gem_messages     (id, conversation_id → gem_conversations ON DELETE CASCADE,
                   role, content, display_content, attachments jsonb, created_at)
 storage.buckets  ('gem-uploads', public = false, file_size_limit = 1073741824 /* 1 GiB */)
+gem_support_faq       (id, category, question, answer, sort_order, published)
+gem_support_tickets   (id, owner_key, category, subject, contact, status, context, source)
+gem_support_messages  (id, ticket_id → gem_support_tickets CASCADE, author, body, created_at)
 ```
 
 - `gem_current_owner()` lê `current_setting('request.headers')::json ->> 'x-gem-owner'`.
@@ -413,6 +456,9 @@ storage.buckets  ('gem-uploads', public = false, file_size_limit = 1073741824 /*
 - Trigger `gem_messages_touch` atualiza `updated_at` da conversa a cada mensagem (ordena a sidebar).
 - Políticas para `anon`/`authenticated`: `SELECT`, `INSERT`, `UPDATE`, `DELETE` em conversas;
   `SELECT`, `INSERT`, `DELETE` em mensagens — sempre limitadas ao `owner_key` da requisição.
+- `gem_ai_support`: FAQ pública (somente `published`), chamados e mensagens isolados por
+  `owner_key`; escritas exclusivamente por `gem_create_support_ticket`,
+  `gem_reply_support_ticket` e `gem_close_support_ticket`. Detalhes em `SUPORTE.md`.
 - `gem_files_select/insert/update/delete` em `storage.objects`: mesmo `owner_key`, usando
   `storage.foldername(name)[1]`. Validadas com upload, URL assinada, listagem e exclusão reais
   (HTTP 200 como `anon`, sem `service_role`).
@@ -452,6 +498,8 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 ```
 .
 ├── README.md
+├── SUPORTE.md                   # runbook da equipe de suporte (SQL de resposta, status, FAQ)
+├── .github/ISSUE_TEMPLATE/      # formulário de issue + links de contato
 ├── .env.example                 # referência de variáveis (nada de segredo aqui)
 ├── .gitignore
 ├── docs/                        # ← raiz publicada pelo GitHub Pages
@@ -473,12 +521,15 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 │       ├── files.js             # anexos: validação, canvas, TUS, partes, Web Share, prompt
 │       ├── groq.js              # cliente SSE da Edge Function
 │       ├── markdown.js          # renderizador Markdown seguro
-│       └── app.js               # UI, streaming, anexos, visualViewport/iOS, modal de configs
+│       ├── support.js           # REST/RPC de chamados, fila offline, diagnóstico, link Git
+│       ├── support-ui.js        # abas, FAQ, formulário, thread, status
+│       └── app.js               # UI, streaming, anexos, visualViewport/iOS, modais
 └── supabase/
     ├── config.toml
     ├── migrations/202611240001_gem_ai_init.sql
     ├── migrations/202611240002_gem_ai_files.sql
     ├── migrations/202611240003_gem_ai_files_limit.sql
+    ├── migrations/202611260004_gem_ai_support.sql
     └── functions/gem-chat/index.ts
 ```
 
@@ -520,4 +571,7 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 | `Image must have at least 32 pixels` | Não deve ocorrer: `files.js` centraliza imagens pequenas num canvas 32×32 |
 | Imagens ignoradas com GPT-OSS | Esperado: o app e o proxy trocam automaticamente para `qwen/qwen3.8-27b` |
 | Anexo não abre ao clicar | Link assinado expira em 1 h; recarregue a conversa para gerar outro |
+| `404 Could not find the function ... gem_create_support_ticket` | Cache do PostgREST após a migration: rode `notify pgrst, 'reload schema';` e confira os `grant execute` |
+| FAQ/chamados não aparecem na central | Migration `gem_ai_support` não aplicada ou `x-gem-owner` ausente. A FAQ essencial embutida continua funcionando |
+| Chamado virou `RASCUNHO` | Envio falhou por rede: fica no `localStorage` e é reenviado sozinho ao voltar online. Erros 4xx aparecem como toast |
 | Página 404 no Pages | Branch/folder errados, repositório privado em plano Free, ou build ainda rodando (~30 s) |

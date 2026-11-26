@@ -10,6 +10,7 @@ import * as db from "./db.js";
 import { fetchModels, streamChat, testGeneration } from "./groq.js";
 import { renderMarkdown, escapeHtml } from "./markdown.js";
 import { formatDuration } from "./media.js";
+import { initSupport } from "./support-ui.js";
 import {
   processFiles,
   buildContent,
@@ -1005,6 +1006,8 @@ function setupMobilePlatform() {
 
 (async function boot() {
   bindEvents();
+  // Central de ajuda/chamados: módulo separado para não misturar com o chat.
+  initSupport({ showToast, closeSidebar });
   setupMobilePlatform();
   const isTouch = window.matchMedia?.("(hover: none), (pointer: coarse)").matches;
   const sizeHint = formatBytes(getConfig().maxFileBytes);

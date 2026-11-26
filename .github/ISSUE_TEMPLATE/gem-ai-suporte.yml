@@ -1,0 +1,74 @@
+name: "🆘 Suporte do Gem.AI"
+description: "Relate um problema, dúvida ou sugestão sobre o app. Para acompanhar resposta da equipe, prefira a central de ajuda dentro do app."
+title: "[Suporte] "
+labels: ["suporte"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por ajudar a melhorar o Gem.AI! 💜
+
+        **Não cole chaves, tokens, senhas ou conteúdo privado de conversas.**
+        Se você abriu um chamado pelo app, informe o protocolo para cruzarmos os registros.
+
+        Prefere resposta direta no app? Use **Ajuda e suporte → Abrir chamado**: a FAQ, o status e a thread ficam no Supabase.
+  - type: dropdown
+    id: categoria
+    attributes:
+      label: Categoria
+      description: Igual às categorias da central de ajuda.
+      options:
+        - "Problema / bug"
+        - "Dúvida"
+        - "Sugestão"
+        - "Anexo / arquivo"
+        - "Outro"
+    validations:
+      required: true
+  - type: input
+    id: protocolo
+    attributes:
+      label: Protocolo do chamado no app (opcional)
+      description: "8 caracteres exibidos em Meus chamados, ex.: 1A2B3C4D"
+      placeholder: "1A2B3C4D"
+    validations:
+      required: false
+  - type: textarea
+    id: relato
+    attributes:
+      label: O que aconteceu?
+      description: "Descreva o passo a passo, o que esperava e o que apareceu (inclua o texto do aviso do chip, se houver)."
+      placeholder: "Ao anexar um .xls no Android, o chip mostrou ⚠ ver aviso..."
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostico
+    attributes:
+      label: Diagnóstico técnico (opcional)
+      description: "Cole o texto de Ajuda e suporte → Diagnóstico → Copiar diagnóstico. Ele não contém chaves nem mensagens."
+      render: shell
+    validations:
+      required: false
+  - type: dropdown
+    id: plataforma
+    attributes:
+      label: Onde aconteceu?
+      options:
+        - "iOS · Safari"
+        - "iOS · PWA (Tela de Início)"
+        - "Android · Chrome"
+        - "Android · PWA instalado"
+        - "Desktop · Chrome/Edge"
+        - "Desktop · Firefox/Safari"
+        - "Outro / WebView"
+    validations:
+      required: true
+  - type: checkboxes
+    id: conferencia
+    attributes:
+      label: Antes de enviar
+      options:
+        - label: "Revisei a FAQ em Ajuda e suporte"
+          required: false
+        - label: "Confirmo que não há dados sensíveis neste relato"
+          required: true

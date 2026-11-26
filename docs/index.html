@@ -53,6 +53,10 @@
           <span id="statusDot" class="status-dot"></span>
           <span id="statusText">Conectando…</span>
         </div>
+        <button id="supportBtn" class="foot-btn" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.2 9a2.8 2.8 0 1 1 4.6 2.2c-.9.7-1.8 1.2-1.8 2.3v.3"/><path d="M12 17.2h.01"/></svg>
+          Ajuda e suporte
+        </button>
         <button id="settingsBtn" class="foot-btn" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.94 19.3a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.57 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.7 8.94a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.57a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.06 4.7a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.43 9c.16.62.72 1.05 1.36 1.06H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg>
           Configurações
@@ -187,6 +191,113 @@
         <div class="modal-foot">
           <button id="testConnectionBtn" class="ghost-btn" type="button">Testar conexão</button>
           <button id="saveSettingsBtn" class="primary-btn" type="button">Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Central de ajuda e chamados: FAQ no Supabase, chamados com RLS por
+         identidade local e issue pré-preenchida no GitHub como canal alternativo. -->
+    <div id="supportModal" class="modal-backdrop" hidden>
+      <div class="modal support-modal" role="dialog" aria-modal="true" aria-labelledby="supportTitle">
+        <div class="modal-head">
+          <div>
+            <h2 id="supportTitle">Ajuda e suporte</h2>
+            <p>Perguntas frequentes, chamados e diagnóstico do navegador.</p>
+          </div>
+          <button id="supportClose" class="icon-btn" type="button" aria-label="Fechar">✕</button>
+        </div>
+
+        <div id="supportTabs" class="support-tabs" role="tablist" aria-label="Seções de suporte">
+          <button type="button" role="tab" data-tab="help" aria-selected="true">Ajuda</button>
+          <button type="button" role="tab" data-tab="new" aria-selected="false">Abrir chamado</button>
+          <button type="button" role="tab" data-tab="tickets" aria-selected="false">Meus chamados</button>
+          <button type="button" role="tab" data-tab="diagnostics" aria-selected="false">Diagnóstico</button>
+        </div>
+
+        <div class="modal-body support-body">
+          <section id="supportPanelHelp" role="tabpanel">
+            <p class="help-text">
+              Respostas rápidas antes de abrir um chamado. A FAQ vem do Supabase e pode ser
+              editada pela equipe sem novo deploy.
+            </p>
+            <div id="supportFaqList" class="faq-list"></div>
+            <details id="supportFaqFallback" class="advanced" hidden>
+              <summary>FAQ essencial (modo offline)</summary>
+              <div class="faq-static">
+                <p><b>O anexo não foi analisado?</b> Confira o chip: <code>✓ N caracteres lidos</code> significa que o texto chegou ao modelo. Com <code>⚠</code>, converta para TXT/CSV, PDF com texto ou envie uma imagem.</p>
+                <p><b>Vídeo não abre?</b> Converta para MP4/H.264. MKV, AVI e codecs raros não são decodificados pelo navegador; capturas PNG/JPG funcionam sempre.</p>
+                <p><b>Limites:</b> 1 GiB por arquivo lógico (partes de 48 MiB), 5 arquivos por mensagem e 3 imagens/fotogramas por requisição.</p>
+                <p><b>Histórico sumiu?</b> As conversas são isoladas por uma identidade anônima neste navegador. Limpar dados do site gera outra identidade.</p>
+              </div>
+            </details>
+            <div class="support-links">
+              <a id="supportGitLink" class="ghost-btn" href="https://github.com/Sr-agente208/Gem.AI/issues/new?labels=suporte" target="_blank" rel="noopener noreferrer">Abrir issue no GitHub</a>
+              <button id="supportCopyDiagLink" class="ghost-btn" type="button">Copiar diagnóstico</button>
+            </div>
+          </section>
+
+          <section id="supportPanelNew" role="tabpanel" hidden>
+            <form id="supportForm" class="support-form">
+              <label class="field">
+                <span>Categoria</span>
+                <select id="supportCategory">
+                  <option value="bug">Problema / bug</option>
+                  <option value="duvida" selected>Dúvida</option>
+                  <option value="sugestao">Sugestão</option>
+                  <option value="anexo">Anexo / arquivo</option>
+                  <option value="outro">Outro</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Assunto</span>
+                <input id="supportSubject" type="text" minlength="4" maxlength="160" required placeholder="Ex.: vídeo MP4 não gera fotogramas no Android" />
+              </label>
+              <label class="field">
+                <span>Descrição</span>
+                <textarea id="supportMessage" rows="5" minlength="10" maxlength="5000" required placeholder="O que aconteceu? Em qual aparelho/navegador? O que você esperava?"></textarea>
+              </label>
+              <label class="field">
+                <span>Contato (opcional)</span>
+                <input id="supportContact" type="email" maxlength="200" placeholder="seu@email.com" />
+              </label>
+              <label class="support-check">
+                <input id="supportIncludeDiag" type="checkbox" checked />
+                Incluir diagnóstico técnico (navegador, versão, codecs) — sem mensagens, chaves ou tokens
+              </label>
+              <details class="advanced">
+                <summary>Ver exatamente o que será enviado</summary>
+                <pre id="supportDiagPreview" class="diag-text"></pre>
+              </details>
+              <div id="supportResult" class="support-result" hidden></div>
+              <p id="supportOutboxNote" class="support-note" hidden></p>
+              <button id="supportSubmit" class="primary-btn" type="submit">Abrir chamado</button>
+              <p class="help-text">O chamado fica isolado por identidade local (RLS). Sem conexão, ele é salvo neste navegador e reenviado automaticamente.</p>
+            </form>
+          </section>
+
+          <section id="supportPanelTickets" role="tabpanel" hidden>
+            <div class="support-toolbar">
+              <span id="supportTicketStatus" class="help-text">Carregando…</span>
+              <button id="supportRefresh" class="ghost-btn" type="button">Atualizar</button>
+            </div>
+            <div id="supportTicketList" class="ticket-list"></div>
+          </section>
+
+          <section id="supportPanelDiagnostics" role="tabpanel" hidden>
+            <p class="help-text">
+              Informações técnicas sem dados sensíveis: sem tokens, sem chaves, sem conteúdo
+              das conversas. Copie e cole ao abrir um chamado ou uma issue.
+            </p>
+            <pre id="supportDiagText" class="diag-text"></pre>
+            <div class="support-toolbar">
+              <button id="supportCopyDiag" class="ghost-btn" type="button">Copiar diagnóstico</button>
+              <a id="supportGitFromDiag" class="ghost-btn" href="https://github.com/Sr-agente208/Gem.AI/issues/new?labels=suporte" target="_blank" rel="noopener noreferrer">Abrir issue no GitHub</a>
+            </div>
+          </section>
+        </div>
+
+        <div class="modal-foot">
+          <span class="support-foot-note">Supabase (chamados + FAQ) · GitHub Issues (canal alternativo)</span>
         </div>
       </div>
     </div>
