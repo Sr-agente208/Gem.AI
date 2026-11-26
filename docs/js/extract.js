@@ -5,9 +5,15 @@
 // navegadores móveis; DOCX/XLSX nem tinham extração. Aqui usamos apenas APIs
 // nativas do navegador: DecompressionStream (deflate / deflate-raw) e TextDecoder.
 //
-// Cobertura: PDF com texto (FlateDecode), DOCX, XLSX, PPTX, ODT/ODS/ODP.
+// Cobertura: PDF com texto (FlateDecode); OOXML (docx/docm/dotx, xlsx/xlsm/xltx,
+// pptx/pptm/ppsx), OpenDocument (odt/ods/odp), Office legado (doc/xls/ppt via
+// OLE2), Outlook .msg e RTF. Detalhes dos formatos binários em office-legacy.js.
 // PDFs digitalizados (só imagem) e fontes com codificação proprietária podem
 // não renderizar texto — nesse caso devolvemos "" e a UI avisa o usuário.
+
+import {
+  extractDoc, extractXls, extractPpt, extractMsg, extractRtf, isCfb,
+} from "./office-legacy.js";
 
 const decoderLatin1 = () => new TextDecoder("latin1");
 const decoderUtf8 = () => new TextDecoder("utf-8", { fatal: false });
@@ -249,7 +255,7 @@ function docxText(xml) {
     .join("\n");
 }
 
-function xlsxText(zip, sharedXml, sheetXmls) {
+function xlsxText(sharedXml, sheets) {
   const shared = [];
   if (sharedXml) {
     for (const si of sharedXml.match(/<si\b[\s\S]*?<\/si>/g) || []) {
@@ -257,7 +263,9 @@ function xlsxText(zip, sharedXml, sheetXmls) {
     }
   }
   const lines = [];
-  for (const xml of sheetXmls) {
+  for (const sheet of sheets) {
+    const xml = sheet.xml;
+    if (sheets.length > 1) lines.push(`[planilha: ${sheet.name}]`);
     for (const row of xml.match(/<row\b[^>]*>[\s\S]*?<\/row>/g) || []) {
       const cells = [];
       for (const cell of row.match(/<c\b[^>]*>[\s\S]*?<\/c>|<c\b[^>]*\/>/g) || []) {
@@ -277,65 +285,238 @@ function xlsxText(zip, sharedXml, sheetXmls) {
   return lines.join("\n");
 }
 
-/**
- * Extrai texto de documentos Office / OpenDocument.
- * Devolve "" quando não encontra nada (a UI transforma isso em aviso claro).
- */
-export async function extractOfficeText(file, maxChars = 20000) {
-  const zip = await zipEntries(file);
-  const name = String(file.name || "").toLowerCase();
-  const read = (n) => zipRead(zip, n).then((b) => (b ? asUtf8(b) : null));
+/* ------------------------- Famílias Office ------------------------- */
 
-  if (name.endsWith(".docx")) {
-    const xml = await read("word/document.xml");
-    return (xml ? docxText(xml) : "").slice(0, maxChars);
-  }
-  if (name.endsWith(".xlsx")) {
-    const shared = await read("xl/sharedStrings.xml");
-    const sheets = [];
-    for (const entry of zip.entries.keys()) {
-      if (/^xl\/worksheets\/sheet\d+\.xml$/.test(entry)) {
-        const xml = await read(entry);
-        if (xml) sheets.push(xml);
-      }
+const WORD_ZIP = ["docx", "docm", "dotx", "dotm"];
+const EXCEL_ZIP = ["xlsx", "xlsm", "xltx", "xltm", "xlsb"];
+const PPT_ZIP = ["pptx", "pptm", "potx", "potm", "ppsx", "ppsm"];
+const ODF_ZIP = ["odt", "ods", "odp", "odg", "odf"];
+
+const naturalSort = (a, b) => {
+  const na = Number((a.match(/(\d+)(?=\.|$)/) || [])[1] || 0);
+  const nb = Number((b.match(/(\d+)(?=\.|$)/) || [])[1] || 0);
+  return na - nb || a.localeCompare(b);
+};
+
+/** DOCX + cabeçalhos, rodapés, notas e comentários. */
+async function extractDocxZip(zip, read, maxChars) {
+  const parts = [];
+  const main = await read("word/document.xml");
+  if (main) parts.push(docxText(main));
+  const extras = [...zip.entries.keys()]
+    .filter((n) => /^word\/(header\d*|footer\d*|footnotes|endnotes|comments)\.xml$/.test(n))
+    .sort(naturalSort);
+  for (const name of extras) {
+    const xml = await read(name);
+    if (xml) {
+      const text = docxText(xml);
+      if (text) parts.push(`[${name.split("/").pop()}] ${text}`);
     }
-    return xlsxText(zip, shared, sheets).slice(0, maxChars);
   }
-  if (name.endsWith(".pptx")) {
-    const parts = [];
-    for (const entry of [...zip.entries.keys()].sort()) {
-      if (/^ppt\/slides\/slide\d+\.xml$/.test(entry)) {
-        const xml = await read(entry);
-        if (xml) {
-          const texts = [...xml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((m) => decodeEntities(m[1]));
-          if (texts.length) parts.push(`[slide ${parts.length + 1}] ${texts.join(" ")}`);
-        }
-      }
-    }
-    return parts.join("\n").slice(0, maxChars);
-  }
-  // ODT / ODS / ODP
-  const xml = await read("content.xml");
-  if (!xml) return "";
-  return xmlText(
-    xml
-      .replace(/<\/(?:text:p|text:h|table:table-row)>/g, "\n")
-      .replace(/<table:table-cell\b[^>]*>/g, "\t"),
-  ).slice(0, maxChars);
+  return parts.join("\n").slice(0, maxChars);
 }
 
-/** Extensões que agora têm extração real de texto. */
+/** Nomes das planilhas ficam em xl/workbook.xml (ou xl/workbook.bin no xlsb). */
+async function extractXlsxZip(zip, read, maxChars) {
+  const workbook = (await read("xl/workbook.xml")) || "";
+  const names = [...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]*)"/g)].map((m) =>
+    decodeEntities(m[1]),
+  );
+  const shared = await read("xl/sharedStrings.xml");
+  const sheets = [];
+  const paths = [...zip.entries.keys()]
+    .filter((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n))
+    .sort(naturalSort);
+  for (let i = 0; i < paths.length; i += 1) {
+    const xml = await read(paths[i]);
+    if (xml) sheets.push({ name: names[i] || `Planilha ${i + 1}`, xml });
+  }
+  return xlsxText(shared, sheets).slice(0, maxChars);
+}
+
+/** PPTX em ordem numérica (slide2 antes de slide10) + notas dos slides. */
+async function extractPptxZip(zip, read, maxChars) {
+  const parts = [];
+  const slides = [...zip.entries.keys()]
+    .filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+    .sort(naturalSort);
+  for (let i = 0; i < slides.length; i += 1) {
+    const xml = await read(slides[i]);
+    const num = Number((slides[i].match(/(\d+)\.xml$/) || [])[1] || i + 1);
+    if (xml) {
+      const texts = [...xml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((m) => decodeEntities(m[1]));
+      if (texts.length) parts.push(`[slide ${num}] ${texts.join(" ")}`);
+    }
+    const notes = await read(`ppt/notesSlides/notesSlide${num}.xml`);
+    if (notes) {
+      const noteText = [...notes.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)]
+        .map((m) => decodeEntities(m[1]))
+        .join(" ")
+        .trim();
+      if (noteText && !/^\d+$/.test(noteText)) parts.push(`[notas do slide ${num}] ${noteText}`);
+    }
+  }
+  return parts.join("\n").slice(0, maxChars);
+}
+
+/**
+ * XLSB: os textos ficam em sharedStrings.bin / sheet*.bin como UTF-16LE
+ * dentro de records Brt*. Em vez de depender do layout exato de cada record
+ * (varia entre versões), varremos runs de codepoints imprimíveis — estável
+ * para qualquer BrtSstItem / BrtCellRString.
+ */
+function utf16Runs(bin) {
+  const plausible = (s) => {
+    const good = (s.match(/[A-Za-z0-9À-ÿ\s.,;:!?()\-\/%$@#+=_"']/g) || []).length;
+    return s.length >= 4 && good / s.length > 0.7;
+  };
+  // Remove bytes de record que colaram na borda da string (ex.: "…Beta 2.Ơ").
+  const trimRun = (s) => s.trim().replace(/^[^A-Za-z0-9À-ÿ]+|[^A-Za-z0-9À-ÿ.,;:!?()\-/%$]+$/g, "");
+  const scan = (offset) => {
+    const runs = [];
+    let cur = "";
+    for (let i = offset; i + 1 < bin.length; i += 2) {
+      const cp = bin[i] | (bin[i + 1] << 8);
+      if (cp === 0x09 || (cp >= 0x20 && cp !== 0x7f && cp < 0xd800)) {
+        cur += String.fromCharCode(cp);
+      } else {
+        const value = trimRun(cur);
+        if (plausible(value)) runs.push(value);
+        cur = "";
+      }
+    }
+    const value = trimRun(cur);
+    if (plausible(value)) runs.push(value);
+    return runs;
+  };
+  // O alinhamento par/ímpar depende de onde o record começa. Escolhemos o
+  // que produz mais texto legível (o outro gera CJK/lixo).
+  const even = scan(0);
+  const odd = scan(1);
+  const score = (runs) => runs.join("").length;
+  return score(even) >= score(odd) ? even : odd;
+}
+
+async function extractXlsbZip(zip, maxChars) {
+  const parts = [];
+  const names = [...zip.entries.keys()]
+    .filter((n) => /^xl\/(sharedStrings|worksheets\/sheet\d+)\.bin$/.test(n))
+    .sort(naturalSort);
+  for (const name of names) {
+    const bin = await zipRead(zip, name);
+    if (bin) parts.push(...utf16Runs(bin));
+  }
+  return [...new Set(parts)].join("\n").slice(0, maxChars);
+}
+
+/** ZIP desconhecido: varre XMLs pequenos e extrai texto (Visio, ODF, etc.). */
+async function genericXmlZip(zip, read, maxChars) {
+  const parts = [];
+  const names = [...zip.entries.keys()]
+    .filter((n) => /\.xml$/i.test(n) && !/^\[Content_Types\]|^_rels\/|\.rels$/.test(n))
+    .sort()
+    .slice(0, 40);
+  for (const name of names) {
+    const xml = await read(name);
+    if (xml && xml.length < 400000) {
+      const text = xmlText(xml.replace(/<\/(?:w:p|text:p|a:p|table:table-row)>/g, "\n"));
+      if (text && text.length > 2) parts.push(text);
+    }
+    if (parts.join("\n").length > maxChars) break;
+  }
+  return parts.join("\n").slice(0, maxChars);
+}
+
+/**
+ * Extrai texto de qualquer documento Office / OpenDocument / RTF / .msg.
+ * Devolve "" quando não encontra nada (a UI transforma isso em aviso claro).
+ * Nunca lança: formatos criptografados ou corrompidos viram aviso, não erro.
+ */
+export async function extractOfficeText(file, maxChars = 20000) {
+  const name = String(file.name || "").toLowerCase();
+  const ext = name.split(".").pop();
+  let bytes;
+  try {
+    bytes = new Uint8Array(await file.arrayBuffer());
+  } catch {
+    return "";
+  }
+
+  // 1) RTF é texto puro.
+  if (ext === "rtf" || /^\s*\{\s*\\rtf\d/.test(asLatin1(bytes.subarray(0, 64)))) {
+    try { return (await extractRtf(file, maxChars)) || ""; } catch { return ""; }
+  }
+
+  // 2) Office 97-2003 / Outlook são OLE2 Compound Files.
+  if (isCfb(bytes)) {
+    try {
+      if (ext === "xls" || ext === "xla") return await extractXls(file, maxChars);
+      if (ext === "ppt" || ext === "pps" || ext === "pot") return await extractPpt(file, maxChars);
+      if (ext === "msg") return await extractMsg(file, maxChars);
+      return await extractDoc(file, maxChars); // .doc e genérico
+    } catch {
+      return "";
+    }
+  }
+
+  // 3) OOXML / ODF são ZIPs.
+  let zip;
+  try { zip = await zipEntries(file); } catch { return ""; }
+  const read = (n) => zipRead(zip, n).then((b) => (b ? asUtf8(b) : null));
+  try {
+    if (ext === "xlsb") return await extractXlsbZip(zip, maxChars);
+    if (WORD_ZIP.includes(ext)) return await extractDocxZip(zip, read, maxChars);
+    if (EXCEL_ZIP.includes(ext)) return await extractXlsxZip(zip, read, maxChars);
+    if (PPT_ZIP.includes(ext)) return await extractPptxZip(zip, read, maxChars);
+    if (ODF_ZIP.includes(ext)) {
+      const xml = await read("content.xml");
+      if (!xml) return "";
+      return xmlText(
+        xml
+          .replace(/<\/(?:text:p|text:h|table:table-row)>/g, "\n")
+          .replace(/<table:table-cell\b[^>]*>/g, "\t"),
+      ).slice(0, maxChars);
+    }
+    return await genericXmlZip(zip, read, maxChars);
+  } catch {
+    return "";
+  }
+}
+
+/** Extensões com extração real de texto. */
 export const OFFICE_EXTENSIONS = [
-  "docx", "xlsx", "pptx", "odt", "ods", "odp",
+  // OOXML
+  "docx", "docm", "dotx", "dotm",
+  "xlsx", "xlsm", "xltx", "xltm", "xlsb",
+  "pptx", "pptm", "potx", "potm", "ppsx", "ppsm",
+  // OpenDocument
+  "odt", "ods", "odp", "odg", "odf",
+  // legados / outros
+  "doc", "xls", "ppt", "pps", "pot", "xla", "msg", "rtf",
 ];
 
 export const OFFICE_MIMES = [
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+  "application/vnd.ms-word.document.macroenabled.12",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
+  "application/vnd.ms-excel.sheet.macroenabled.12",
+  "application/vnd.ms-excel.sheet.binary.macroenabled.12",
   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+  "application/vnd.openxmlformats-officedocument.presentationml.template",
+  "application/vnd.ms-powerpoint.presentation.macroenabled.12",
   "application/vnd.oasis.opendocument.text",
   "application/vnd.oasis.opendocument.spreadsheet",
   "application/vnd.oasis.opendocument.presentation",
+  "application/vnd.oasis.opendocument.graphics",
+  "application/msword",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.ms-outlook",
+  "application/rtf",
+  "text/rtf",
 ];
 
 export function isOffice(name, mime = "") {

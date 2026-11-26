@@ -163,7 +163,24 @@ o texto (ou só os arquivos). Nas mensagens antigas, clique num anexo para abrir
 | **Imagens** (PNG/JPG/WebP/GIF…) | Reduzidas no `<canvas>` para até 1024 px (mínimo 32×32, exigido pela Groq), convertidas em JPEG e enviadas ao modelo como `image_url` em base64. |
 | **Texto** (`.txt`, `.md`, `.json`, `.csv`, `.py`, `.js`, `.xml`, `.sql`…) | Lido no navegador e incluído no prompt com marcadores `--- Arquivo: nome ---`. |
 | **PDF** | Texto extraído **localmente** em `docs/js/extract.js`: infla streams `FlateDecode` com `DecompressionStream` e lê os operadores `Tj`/`TJ` dentro de `BT…ET`. Sem CDN, sem worker, sem dependência. |
-| **Office / OpenDocument** (`.docx`, `.xlsx`, `.pptx`, `.odt`, `.ods`, `.odp`) | São ZIPs: o extrator lê o diretório central e extrai `word/document.xml`, planilhas + `sharedStrings.xml`, `<a:t>` dos slides ou `content.xml`. Planilhas saem em colunas separadas por tabulação. |
+| **Word** | `.docx` `.docm` `.dotx` `.dotm` `.doc` (97-2003) `.rtf` | `word/document.xml` + cabeçalhos, rodapés, notas e comentários; `.doc` pela piece table (`CLX`/`PlcPcd`); RTF por controle `\uN`/`\'xx`. |
+| **Excel** | `.xlsx` `.xlsm` `.xltx` `.xltm` `.xlsb` `.xls` (97-2003) `.ods` | Planilhas com nome e colunas em tabulação, `sharedStrings.xml`, fórmulas e números; `.xls` por records BIFF8 (`SST`, `LABELSST`, `RK`, `MULRK`); `.xlsb` por varredura UTF-16LE nos `.bin`. |
+| **PowerPoint** | `.pptx` `.pptm` `.potx` `.potm` `.ppsx` `.ppsm` `.ppt` (97-2003) `.odp` | Slides em ordem numérica (`slide2` antes de `slide10`), `<a:t>` e notas dos slides; `.ppt` pelos atoms `TextCharsAtom`/`TextBytesAtom`, sem os textos-modelo do slide master. |
+| **Outros** | `.odt` `.odg` `.odf` `.msg` (Outlook) e ZIPs XML | `.msg` lê assunto/de/para/corpo; qualquer ZIP com XML passa por um extrator genérico. |
+
+#### Formatos legados (OLE2)
+
+`.doc`, `.xls`, `.ppt` e `.msg` são *Compound Files* (MS-CFB): um sistema de arquivos
+com FAT, mini-FAT e diretório de streams dentro do próprio arquivo.
+`docs/js/office-legacy.js` implementa esse leitor e os parsers de cada stream
+(`WordDocument` + `0Table`/`1Table`, `Workbook`, `PowerPoint Document`, `__substg1.0_*`).
+Tudo local, sem biblioteca e sem rede.
+
+> **Validação com arquivos reais:** os parsers foram testados contra fixtures do
+> **Apache POI** (`SampleDoc.doc/.docx`, `SampleSS.xls/.xlsx/.ods`, `Simple.xlsb`,
+> `SampleShow.ppt/.pptx`, `.docm`/`.xlsm`/`.pptm`, `.msg`) e do **xlrd** (`ragged.xls`),
+> incluindo os `.txt` de referência do POI. 17 formatos lidos, 0 avisos.
+
 | **Outros** | Salvos no Storage e listados na bolha, com aviso explícito no chip sugerindo converter para TXT/CSV, PDF com texto, Office ou imagem. |
 
 O prompt ganha uma **instrução explícita de análise** ("ANALISE esse conteúdo… Não diga que
@@ -174,9 +191,10 @@ um toast avisa na hora — antes, a falha só aparecia como uma nota invisível 
 > **Correção (análise de anexos):** a versão anterior importava `pdfjs-dist@4` de
 > `cdn.jsdelivr.net`. O `pdf.worker.mjs` é cross-origin e falha em vários navegadores
 > móveis; além disso DOCX/XLSX/PPTX viravam "o modelo não lê este formato". Reproduzido
-> em teste: só `.txt` chegava ao modelo. Agora **PDF, DOCX, XLSX, PPTX, ODT e TXT/CSV
-> são lidos sem nenhuma requisição externa**. PDF digitalizado (só imagem) continua sem
-> camada de texto — nesse caso envie uma foto/PNG da página para usar a visão do modelo.
+> em teste: só `.txt` chegava ao modelo. Agora **PDF, todos os formatos Word/Excel/
+> PowerPoint (novos e 97-2003), OpenDocument, RTF, `.msg` e TXT/CSV são lidos sem
+> nenhuma requisição externa**. PDF digitalizado (só imagem) continua sem camada de
+> texto — nesse caso envie uma foto/PNG da página para usar a visão do modelo.
 
 Limites (`docs/js/config.js`): **5 arquivos** por mensagem, **1 GiB por arquivo**,
 **3 imagens** por requisição, **20.000 caracteres** extraídos por arquivo
@@ -415,7 +433,8 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 │   └── js/
 │       ├── config.js            # URL + publishable key + token + modelos + limites de arquivo
 │       ├── db.js                # cliente PostgREST (conversas e mensagens + anexos)
-│       ├── extract.js           # PDF/DOCX/XLSX/PPTX/ODT: infla + parser, 100% local
+│       ├── extract.js           # PDF + OOXML/ODF: infla, ZIP, XML — 100% local
+│       ├── office-legacy.js     # OLE2/CFB: doc/xls/ppt/msg + RTF (sem biblioteca)
 │       ├── files.js             # anexos: validação, canvas, TUS, partes, Web Share, prompt
 │       ├── groq.js              # cliente SSE da Edge Function
 │       ├── markdown.js          # renderizador Markdown seguro
@@ -456,7 +475,9 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 | Download de arquivo grande trava | O download junta todas as partes num `Blob` em memória. Para 1 GiB isso exige ~1 GiB de RAM no navegador |
 | Upload grande travou no meio | Acima de 6 MB o app usa TUS em chunks; confira `?cors=1` no diagnóstico e a conexão. O progresso aparece acima do composer |
 | PDF sem texto extraído | PDF digitalizado (só imagem) ou com fonte/CMaps proprietários: o extrator local não acha `Tj`/`TJ`. Envie uma foto/PNG da página para análise visual; o original continua disponível para download |
-| DOCX/XLSX "sem leitura" | Arquivo criptografado, ZIP com método de compressão não suportado, ou navegador sem `DecompressionStream` (anteriores a Chrome 103 / Safari 16.4). Salve como `.txt`/`.csv` ou atualize o navegador |
+| DOCX/XLSX/Office "sem leitura" | Arquivo criptografado, ZIP com método de compressão não suportado, ou navegador sem `DecompressionStream` (anteriores a Chrome 103 / Safari 16.4). Salve como `.txt`/`.csv` ou atualize o navegador |
+| `.doc`/`.xls`/`.ppt` parcial | Formatos OLE2 são "melhor esforço": não interpreta macros, OLE embutido, criptografia nem Word 6/95 incomum. O texto principal é extraído; confira o contador `✓ N caracteres lidos` no chip |
+| `.xlsb` só traz as strings | O formato binário do Excel guarda valores/fórmulas em records `Brt*`; a varredura UTF-16LE recupera os textos, mas não a grade de células |
 | `Image must have at least 32 pixels` | Não deve ocorrer: `files.js` centraliza imagens pequenas num canvas 32×32 |
 | Imagens ignoradas com GPT-OSS | Esperado: o app e o proxy trocam automaticamente para `qwen/qwen3.8-27b` |
 | Anexo não abre ao clicar | Link assinado expira em 1 h; recarregue a conversa para gerar outro |
