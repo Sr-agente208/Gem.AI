@@ -4,8 +4,7 @@
 // ao modelo apenas o que ele consegue entender.
 import { CONFIG, getConfig, getStorageUrl } from "./config.js";
 import { getOwnerKey } from "./db.js";
-
-const PDFJS_BASE = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4/build/";
+import { extractPdfText, extractOfficeText, isOffice } from "./extract.js";
 
 function uid() {
   return globalThis.crypto?.randomUUID
@@ -43,6 +42,7 @@ function guessKind(file) {
     return "image";
   }
   if (mime === "application/pdf" || ext === "pdf") return "pdf";
+  if (isOffice(file.name, mime)) return "office";
   if (
     mime.startsWith("text/") ||
     CONFIG.textExtensions.includes(ext) ||
@@ -54,7 +54,9 @@ function guessKind(file) {
 }
 
 export function kindLabel(kind) {
-  return { image: "imagem", text: "texto", pdf: "PDF", binary: "arquivo" }[kind] || "arquivo";
+  return {
+    image: "imagem", text: "texto", pdf: "PDF", office: "documento", binary: "arquivo",
+  }[kind] || "arquivo";
 }
 
 /** Reduz a imagem antes de virar base64 (limite da Groq: 4 MB / 3 imagens). */
@@ -93,27 +95,6 @@ function downscaleImage(file, maxEdge) {
     };
     image.src = objectUrl;
   });
-}
-
-/** pdf.js é carregado sob demanda, só quando há PDF; falha não impede o anexo. */
-async function extractPdfText(file, maxChars) {
-  const pdfjs = await import(`${PDFJS_BASE}pdf.mjs`);
-  pdfjs.GlobalWorkerOptions.workerSrc = `${PDFJS_BASE}pdf.worker.mjs`;
-  const data = new Uint8Array(await file.arrayBuffer());
-  const document = await pdfjs.getDocument({ data }).promise;
-  const pageCount = Math.min(document.numPages, 20);
-  const chunks = [];
-  let total = 0;
-  for (let index = 1; index <= pageCount; index += 1) {
-    const page = await document.getPage(index);
-    const content = await page.getTextContent();
-    const text = content.items.map((item) => item.str || "").join(" ");
-    chunks.push(`[página ${index}] ${text}`);
-    total += text.length;
-    if (total >= maxChars) break;
-  }
-  document.destroy?.();
-  return chunks.join("\n").slice(0, maxChars);
 }
 
 /**
@@ -165,13 +146,27 @@ export async function processFiles(fileList, existing = []) {
         imageCount += 1;
       } else if (kind === "text") {
         item.text = (await file.text()).slice(0, config.maxExtractChars);
-      } else if (kind === "pdf") {
-        item.text = await extractPdfText(file, config.maxExtractChars);
+        item.extracted = item.text.length;
+      } else if (kind === "pdf" || kind === "office") {
+        // Extratores nativos (DecompressionStream + parser de streams/ZIP),
+        // sem CDN e sem worker cross-origin.
+        const text =
+          kind === "pdf"
+            ? await extractPdfText(file, config.maxExtractChars)
+            : await extractOfficeText(file, config.maxExtractChars);
+        item.text = (text || "").slice(0, config.maxExtractChars);
         if (!item.text.trim()) {
-          item.note = "PDF salvo, mas não deu para extrair o texto (pode ser digitalizado).";
+          item.note =
+            kind === "pdf"
+              ? "Não deu para ler o texto deste PDF (provavelmente digitalizado). Envie uma foto/PNG da página para análise visual."
+              : "Não deu para ler o texto deste documento. Tente salvar como .txt/.csv ou PDF com texto.";
+        } else {
+          item.extracted = item.text.length;
         }
       } else {
-        item.note = "Arquivo salvo, mas o modelo não lê este formato diretamente.";
+        item.note =
+          `Formato .${extension(file.name)} sem leitura de texto. Converta para TXT/CSV, ` +
+          "PDF com texto, DOCX/XLSX ou envie uma imagem para análise visual.";
       }
     } catch (error) {
       // Fotos do iPhone saem como HEIC. O Safari costuma decodificar, mas
@@ -201,16 +196,40 @@ export async function processFiles(fileList, existing = []) {
 export function buildContent(text, attachments = []) {
   const config = getConfig();
   const images = attachments.filter((item) => item.kind === "image" && item.dataUrl);
+  const readable = attachments.filter((item) => item.text && item.text.trim());
+  const unreadable = attachments.filter((item) => !item.text?.trim() && item.note);
   let composed = String(text || "").trim();
-  if (!composed && attachments.length) composed = "Analise o(s) arquivo(s) enviado(s).";
 
-  for (const item of attachments) {
-    if (item.text && item.text.trim()) {
-      composed +=
-        `\n\n--- Arquivo: ${item.name} ---\n${item.text.trim()}\n--- Fim do arquivo ---`;
-    } else if (item.note) {
-      composed += `\n\n[${item.name}: ${item.note}]`;
-    }
+  // Instrução explícita: sem ela o modelo tende a responder "não tenho acesso
+  // ao arquivo" mesmo com o conteúdo colado logo abaixo.
+  if (readable.length) {
+    composed =
+      (composed ? `${composed}\n\n` : "") +
+      `O usuário anexou ${readable.length} arquivo(s) cujo conteúdo está transcrito abaixo. ` +
+      "ANALISE esse conteúdo, responda com base nele e cite trechos quando útil. " +
+      "Não diga que não tem acesso aos arquivos.";
+  } else if (!composed && attachments.length) {
+    composed = "Analise o(s) arquivo(s) enviado(s).";
+  }
+
+  // Reparte o teto de 60 mil caracteres entre os arquivos: sem isso, o 5º
+  // anexo era simplesmente cortado pelo slice() final.
+  const budget = Math.max(4000, 58000 - composed.length - unreadable.length * 300);
+  const perFile = Math.max(1500, Math.floor(budget / Math.max(1, readable.length)));
+  for (const item of readable) {
+    const body = item.text.trim();
+    const clipped = body.length > perFile;
+    composed +=
+      `\n\n--- Arquivo: ${item.name} (${body.length} caracteres lidos` +
+      `${clipped ? `, trecho de ${perFile}` : ""}) ---\n` +
+      `${body.slice(0, perFile)}${clipped ? "\n[… trecho restante omitido]" : ""}` +
+      "\n--- Fim do arquivo ---";
+  }
+  for (const item of unreadable) {
+    // Deixa claro ao modelo que NÃO deve inventar o conteúdo.
+    composed +=
+      `\n\n[${item.name}: conteúdo NÃO disponível — ${item.note} ` +
+      "Não invente o que havia neste arquivo; avise o usuário e sugira outro formato.]";
   }
   composed = composed.slice(0, 60000);
 
@@ -256,6 +275,7 @@ function attachmentMetadata(item, path, parts) {
   // Arquivos maiores que o teto por objeto viram varias partes no Storage.
   if (parts && parts.length) meta.parts = parts;
   if (item.note) meta.note = item.note;
+  if (item.extracted) meta.extracted = item.extracted;
   // Cópia reduzida da imagem no jsonb mantém o contexto em perguntas de follow-up.
   if (item.kind === "image" && item.dataUrl && item.dataUrl.length <= 600000) {
     meta.dataUrl = item.dataUrl;

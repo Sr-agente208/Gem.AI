@@ -161,14 +161,28 @@ o texto (ou só os arquivos). Nas mensagens antigas, clique num anexo para abrir
 | Tipo | O que acontece |
 | --- | --- |
 | **Imagens** (PNG/JPG/WebP/GIF…) | Reduzidas no `<canvas>` para até 1024 px (mínimo 32×32, exigido pela Groq), convertidas em JPEG e enviadas ao modelo como `image_url` em base64. |
-| **Texto** (`.txt`, `.md`, `.json`, `.csv`, `.py`, `.js`…) | Lido no navegador e incluído no prompt com marcadores `--- Arquivo: nome ---`. |
-| **PDF** | Texto extraído no navegador com `pdfjs-dist@4` (até 20 páginas) via CDN, carregado sob demanda. PDFs digitalizados sem camada de texto ficam salvos, mas não são "lidos" — aparece um aviso. |
-| **Outros** | Salvos no Storage e listados na bolha, mas o modelo recebe só um aviso de que não lê aquele formato. |
+| **Texto** (`.txt`, `.md`, `.json`, `.csv`, `.py`, `.js`, `.xml`, `.sql`…) | Lido no navegador e incluído no prompt com marcadores `--- Arquivo: nome ---`. |
+| **PDF** | Texto extraído **localmente** em `docs/js/extract.js`: infla streams `FlateDecode` com `DecompressionStream` e lê os operadores `Tj`/`TJ` dentro de `BT…ET`. Sem CDN, sem worker, sem dependência. |
+| **Office / OpenDocument** (`.docx`, `.xlsx`, `.pptx`, `.odt`, `.ods`, `.odp`) | São ZIPs: o extrator lê o diretório central e extrai `word/document.xml`, planilhas + `sharedStrings.xml`, `<a:t>` dos slides ou `content.xml`. Planilhas saem em colunas separadas por tabulação. |
+| **Outros** | Salvos no Storage e listados na bolha, com aviso explícito no chip sugerindo converter para TXT/CSV, PDF com texto, Office ou imagem. |
+
+O prompt ganha uma **instrução explícita de análise** ("ANALISE esse conteúdo… Não diga que
+não tem acesso aos arquivos") e, quando algum arquivo não pôde ser lido, uma ordem de
+**não inventar o conteúdo**. O chip mostra `✓ N caracteres lidos` ou `⚠ sem leitura`, e
+um toast avisa na hora — antes, a falha só aparecia como uma nota invisível dentro do prompt.
+
+> **Correção (análise de anexos):** a versão anterior importava `pdfjs-dist@4` de
+> `cdn.jsdelivr.net`. O `pdf.worker.mjs` é cross-origin e falha em vários navegadores
+> móveis; além disso DOCX/XLSX/PPTX viravam "o modelo não lê este formato". Reproduzido
+> em teste: só `.txt` chegava ao modelo. Agora **PDF, DOCX, XLSX, PPTX, ODT e TXT/CSV
+> são lidos sem nenhuma requisição externa**. PDF digitalizado (só imagem) continua sem
+> camada de texto — nesse caso envie uma foto/PNG da página para usar a visão do modelo.
 
 Limites (`docs/js/config.js`): **5 arquivos** por mensagem, **1 GiB por arquivo**,
-**3 imagens** por requisição, **20.000 caracteres** extraídos por arquivo de texto/PDF
-(arquivos acima de 50 MiB não são lidos no navegador, só salvos). O proxy também corta
-em 3 imagens e 4 MB de base64 por imagem.
+**3 imagens** por requisição, **20.000 caracteres** extraídos por arquivo
+(arquivos acima de 50 MiB não são lidos no navegador, só salvos). O `buildContent()`
+reparte o teto de 60 mil caracteres entre os anexos para nenhum ser cortado em silêncio.
+O proxy também corta em 3 imagens e 4 MB de base64 por imagem.
 
 > **Como chegamos a 1 GiB sem pagar Pro:** o Supabase Free limita cada **objeto** a
 > **50 MiB** (medido: 52.428.800 B → 200; 53.477.376 B → `413 EntityTooLarge`). O app
@@ -401,7 +415,8 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 │   └── js/
 │       ├── config.js            # URL + publishable key + token + modelos + limites de arquivo
 │       ├── db.js                # cliente PostgREST (conversas e mensagens + anexos)
-│       ├── files.js             # anexos: validação, PDF, canvas, TUS, partes, Web Share
+│       ├── extract.js           # PDF/DOCX/XLSX/PPTX/ODT: infla + parser, 100% local
+│       ├── files.js             # anexos: validação, canvas, TUS, partes, Web Share, prompt
 │       ├── groq.js              # cliente SSE da Edge Function
 │       ├── markdown.js          # renderizador Markdown seguro
 │       └── app.js               # UI, streaming, anexos, visualViewport/iOS, modal de configs
@@ -440,7 +455,8 @@ Depois ajuste `supabaseUrl` / `supabasePublishableKey` em `docs/js/config.js`
 | `413 / The object exceeded the maximum allowed size` | Uma parte ficou acima do teto do plano (50 MiB no Free). Reduza `CONFIG.storagePartBytes`; o bucket aceita 1 GiB |
 | Download de arquivo grande trava | O download junta todas as partes num `Blob` em memória. Para 1 GiB isso exige ~1 GiB de RAM no navegador |
 | Upload grande travou no meio | Acima de 6 MB o app usa TUS em chunks; confira `?cors=1` no diagnóstico e a conexão. O progresso aparece acima do composer |
-| PDF sem texto extraído | PDF digitalizado (imagem) ou CDN do `pdfjs-dist` bloqueada; o arquivo original continua disponível para download |
+| PDF sem texto extraído | PDF digitalizado (só imagem) ou com fonte/CMaps proprietários: o extrator local não acha `Tj`/`TJ`. Envie uma foto/PNG da página para análise visual; o original continua disponível para download |
+| DOCX/XLSX "sem leitura" | Arquivo criptografado, ZIP com método de compressão não suportado, ou navegador sem `DecompressionStream` (anteriores a Chrome 103 / Safari 16.4). Salve como `.txt`/`.csv` ou atualize o navegador |
 | `Image must have at least 32 pixels` | Não deve ocorrer: `files.js` centraliza imagens pequenas num canvas 32×32 |
 | Imagens ignoradas com GPT-OSS | Esperado: o app e o proxy trocam automaticamente para `qwen/qwen3.8-27b` |
 | Anexo não abre ao clicar | Link assinado expira em 1 h; recarregue a conversa para gerar outro |

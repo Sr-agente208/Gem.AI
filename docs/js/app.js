@@ -144,11 +144,20 @@ function setUploadStatus(text) {
 function attachmentChip(meta, removable = false) {
   const name = escapeHtml(meta.name || "arquivo");
   const note = meta.note ? escapeHtml(meta.note) : "";
-  const sub = `${formatBytes(meta.size)} · ${kindLabel(meta.kind)}${note ? " · aviso" : ""}`;
+  const status = note
+    ? " · ⚠ sem leitura"
+    : meta.extracted
+      ? ` · ✓ ${meta.extracted} caracteres lidos`
+      : "";
+  const sub = `${formatBytes(meta.size)} · ${kindLabel(meta.kind)}${status}`;
+  const icon =
+    meta.kind === "pdf" ? "📕" :
+    meta.kind === "office" ? "📊" :
+    meta.kind === "text" ? "📄" : "📎";
   const preview =
     meta.kind === "image" && meta.dataUrl
       ? `<img src="${escapeHtml(meta.dataUrl)}" alt="" />`
-      : `<span class="file-icon" aria-hidden="true">${meta.kind === "pdf" ? "📕" : meta.kind === "text" ? "📄" : "📎"}</span>`;
+      : `<span class="file-icon" aria-hidden="true">${icon}</span>`;
 
   if (removable) {
     return (
@@ -220,8 +229,26 @@ async function addFiles(fileList) {
     const { attachments, warnings } = await processFiles(fileList, state.pending);
     state.pending.push(...attachments);
     for (const warning of warnings) showToast(warning, "error");
-    if (attachments.length) {
+    const read = attachments.filter((item) => item.extracted);
+    const unread = attachments.filter((item) => item.note);
+    if (read.length) {
+      showToast(
+        `${read.length} arquivo(s) lido(s): ${read.reduce((n, a) => n + a.extracted, 0)} ` +
+          "caracteres serão enviados ao modelo para análise.",
+        "ok",
+      );
+    } else if (attachments.length) {
       showToast(`${attachments.length} arquivo(s) pronto(s) para enviar.`, "ok");
+    }
+    if (unread.length) {
+      showToast(
+        unread.length === 1
+          ? unread[0].note
+          : `${unread.length} arquivo(s) não puderam ser lidos (${unread
+              .map((item) => item.name)
+              .join(", ")}). Veja o aviso em cada chip.`,
+        "error",
+      );
     }
   } catch (error) {
     showToast(error?.message || "Falha ao preparar os arquivos.", "error");
